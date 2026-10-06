@@ -1,0 +1,101 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: respira-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  geocoding-service:
+    build: ./services/geocoding-service
+    container_name: respira-geocoding
+    environment:
+      - PORT=3001
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  weather-service:
+    build: ./services/weather-service
+    container_name: respira-weather
+    environment:
+      - PORT=3002
+    ports:
+      - "3002:3002"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3002/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  air-quality-service:
+    build: ./services/air-quality-service
+    container_name: respira-air-quality
+    environment:
+      - PORT=3003
+      - REDIS_URL=redis://redis:6379
+      - AQI_ALERT_THRESHOLD=80
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "3003:3003"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3003/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  alert-service:
+    build: ./services/alert-service
+    container_name: respira-alerts
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - PORT=3004
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "3004:3004"
+
+  api-gateway:
+    build: ./services/api-gateway
+    container_name: respira-gateway
+    environment:
+      - PORT=3000
+      - REDIS_URL=redis://redis:6379
+      - GEOCODING_SERVICE_URL=http://geocoding-service:3001
+      - WEATHER_SERVICE_URL=http://weather-service:3002
+      - AIR_QUALITY_SERVICE_URL=http://air-quality-service:3003
+      - CACHE_TTL_SECONDS=300
+    depends_on:
+      redis:
+        condition: service_healthy
+      geocoding-service:
+        condition: service_started
+      weather-service:
+        condition: service_started
+      air-quality-service:
+        condition: service_started
+    ports:
+      - "3000:3000"
+
+  client:
+    image: nginx:alpine
+    container_name: respira-client
+    volumes:
+      - ./client:/usr/share/nginx/html:ro
+    ports:
+      - "8080:80"
+    depends_on:
+      - api-gateway

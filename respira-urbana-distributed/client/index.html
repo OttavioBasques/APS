@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Respira Urbana</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+
+    --bg: #F2F7F5;
+    --panel: #FFFFFF;
+    --ink: #10262A;
+    --ink-soft: #4C6660;
+    --line: #D3E2DC;
+    --sage: #5C8A76;
+    --sage-bg: #E4EFE7;
+    --amber: #B87A2A;
+    --amber-bg: #F6E9D3;
+    --coral: #B5473F;
+    --coral-bg: #F5E1DE;
+    --dot-idle: #C3D3CD;
+    --accent: #2E5C55;
+  }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  * { box-sizing: border-box; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0E1B1A; --panel: #16302C; --ink: #EAF3EF; --ink-soft: #9FB8B0;
+      --line: #294842; --sage: #8FC1A5; --sage-bg: #1D3B2E; --amber: #E3B36B;
+      --amber-bg: #3B2E17; --coral: #E38B82; --coral-bg: #3B1F1C;
+      --dot-idle: #33504A; --accent: #8FC1A5;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0E1B1A; --panel: #16302C; --ink: #EAF3EF; --ink-soft: #9FB8B0;
+    --line: #294842; --sage: #8FC1A5; --sage-bg: #1D3B2E; --amber: #E3B36B;
+    --amber-bg: #3B2E17; --coral: #E38B82; --coral-bg: #3B1F1C;
+    --dot-idle: #33504A; --accent: #8FC1A5;
+  }
+
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--ink);
+    font-family: 'Inter', -apple-system, sans-serif; -webkit-font-smoothing: antialiased; }
+
+  .wrap { max-width: 480px; margin: 0 auto; padding: 20px 18px calc(40px + env(safe-area-inset-bottom, 0px)); min-height: 100%; }
+
+  header { padding-top: max(18px, env(safe-area-inset-top, 0px)); margin-bottom: 18px; }
+  .wordmark { font-family: 'Fraunces', serif; font-size: 30px; font-weight: 600; letter-spacing: -0.01em;
+    margin: 0; display: flex; align-items: baseline; gap: 8px; }
+  .wordmark span.leaf { font-size: 20px; }
+  .tagline { color: var(--ink-soft); font-size: 14px; margin: 4px 0 0; max-width: 34ch; }
+  .gateway-note { color: var(--ink-soft); font-size: 11.5px; margin: 6px 0 0; font-variant-numeric: tabular-nums; }
+
+  form.search { display: flex; gap: 8px; margin-top: 16px; }
+  input[type="text"] { flex: 1; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--ink); font-size: 15px; font-family: 'Inter', sans-serif; outline: none; }
+  input[type="text"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button { font-family: 'Inter', sans-serif; font-weight: 600; border: none; cursor: pointer; }
+  .btn-primary { background: var(--accent); color: var(--bg); border-radius: 10px; padding: 12px 16px; font-size: 15px; }
+  .btn-primary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .btn-geo { background: none; color: var(--accent); font-size: 13px; padding: 8px 0 0; text-decoration: underline; text-underline-offset: 3px; }
+  .btn-geo:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .suggestions { list-style: none; margin: 8px 0 0; padding: 0; border: 1px solid var(--line);
+    border-radius: 10px; overflow: hidden; background: var(--panel); }
+  .suggestions li button { width: 100%; text-align: left; background: none; color: var(--ink);
+    padding: 11px 14px; font-size: 14px; font-weight: 500; border-bottom: 1px solid var(--line); }
+  .suggestions li:last-child button { border-bottom: none; }
+  .suggestions li button:hover, .suggestions li button:focus-visible { background: var(--sage-bg); }
+  .suggestions li button .muted { color: var(--ink-soft); font-weight: 400; }
+
+  /* status agora reflete a resposta do gateway: live (verde) / cache (ambar) / unavailable (vermelho) */
+  .status-strip { display: flex; gap: 14px; margin-top: 18px; padding: 10px 12px; border: 1px solid var(--line);
+    border-radius: 10px; background: var(--panel); font-size: 12px; color: var(--ink-soft); flex-wrap: wrap; }
+  .status-item { display: flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dot-idle); flex-shrink: 0; }
+  .dot.pending { background: var(--amber); animation: pulse 1s infinite ease-in-out; }
+  .dot.ok { background: var(--sage); }
+  .dot.warn { background: var(--amber); }
+  .dot.err { background: var(--coral); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  main { margin-top: 20px; display: flex; flex-direction: column; gap: 14px; }
+  .empty { text-align: left; padding: 40px 4px; color: var(--ink-soft); }
+  .empty p { margin: 0; font-size: 15px; line-height: 1.6; max-width: 32ch; }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 18px 16px; }
+  .card h2 { font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0.03em;
+    color: var(--ink-soft); margin: 0 0 10px; }
+
+  .place-name { font-family: 'Fraunces', serif; font-size: 22px; font-weight: 500; margin: 0 0 2px; }
+  .place-sub { color: var(--ink-soft); font-size: 13px; margin: 0 0 14px; }
+
+  .temp-row { display: flex; align-items: flex-end; gap: 14px; }
+  .temp-big { font-family: 'Fraunces', serif; font-size: 56px; font-weight: 500; line-height: 1; }
+  .temp-meta { padding-bottom: 6px; }
+  .temp-meta .cond { font-size: 15px; font-weight: 600; }
+  .temp-meta .feel { font-size: 13px; color: var(--ink-soft); }
+
+  .metrics-row { display: flex; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+  .metric { flex: 1; }
+  .metric .k { font-size: 11px; color: var(--ink-soft); margin-bottom: 3px; }
+  .metric .v { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  .aqi-badge { display: inline-flex; align-items: baseline; gap: 8px; padding: 10px 14px; border-radius: 10px; margin-bottom: 14px; }
+  .aqi-badge .num { font-family: 'Fraunces', serif; font-size: 30px; font-weight: 600; }
+  .aqi-badge .lbl { font-size: 13px; font-weight: 600; }
+  .aqi-good { background: var(--sage-bg); color: var(--sage); }
+  .aqi-mid { background: var(--amber-bg); color: var(--amber); }
+  .aqi-bad { background: var(--coral-bg); color: var(--coral); }
+
+  .poll-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
+  .poll .k { font-size: 12px; color: var(--ink-soft); }
+  .poll .v { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .poll .bar { height: 4px; border-radius: 2px; background: var(--line); margin-top: 5px; overflow: hidden; }
+  .poll .bar > span { display: block; height: 100%; }
+
+  .uv-row { display: flex; align-items: center; gap: 16px; }
+  .uv-ring { width: 64px; height: 64px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-family: 'Fraunces', serif; font-size: 22px; font-weight: 600; flex-shrink: 0; }
+  .uv-text .uv-lbl { font-weight: 600; font-size: 14px; margin-bottom: 2px; }
+  .uv-text .uv-note { font-size: 13px; color: var(--ink-soft); line-height: 1.5; }
+
+  .error-note { font-size: 13px; color: var(--coral); background: var(--coral-bg); border-radius: 8px; padding: 8px 10px; }
+  .cache-note { font-size: 12px; color: var(--amber); background: var(--amber-bg); border-radius: 8px; padding: 7px 10px; margin-bottom: 10px; }
+
+  footer { margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--line); }
+  footer .arch-note { font-size: 12.5px; color: var(--ink-soft); line-height: 1.6; margin: 0 0 10px; }
+  footer .timestamps { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+  @media (prefers-reduced-motion: reduce) { .dot.pending { animation: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <p class="wordmark"><span class="leaf">🌿</span>Respira Urbana</p>
+    <p class="tagline">Clima e qualidade do ar, servidos por um API Gateway que orquestra três microsserviços.</p>
+    <p class="gateway-note" id="gatewayNote"></p>
+
+    <form class="search" id="searchForm">
+      <label for="cityInput" class="visually-hidden">Nome da cidade</label>
+      <input type="text" id="cityInput" placeholder="Buscar uma cidade…" autocomplete="off" inputmode="search">
+      <button type="submit" class="btn-primary">Buscar</button>
+    </form>
+    <button type="button" class="btn-geo" id="geoBtn">Usar minha localização</button>
+
+    <ul class="suggestions" id="suggestions" style="display:none;"></ul>
+
+    <div class="status-strip" id="statusStrip">
+      <div class="status-item"><span class="dot" id="dotGeo"></span>geocodificação</div>
+      <div class="status-item"><span class="dot" id="dotWeather"></span>clima</div>
+      <div class="status-item"><span class="dot" id="dotAir"></span>qualidade do ar</div>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="empty" id="emptyState">
+      <p>Busque uma cidade ou use sua localização para começar. O gateway consulta os serviços de clima e qualidade do ar em paralelo — se um deles cair, o outro card ainda aparece.</p>
+    </div>
+  </main>
+
+  <footer>
+    <p class="arch-note">Arquitetura: este cliente fala apenas com o API Gateway. O Gateway chama três microsserviços internos (geocodificação, clima, qualidade do ar), guarda respostas no Redis por alguns minutos e usa esse cache quando um serviço está fora do ar. Um quarto serviço, separado, escuta alertas de qualidade do ar publicados via Redis Pub/Sub — de forma totalmente assíncrona.</p>
+    <div class="timestamps" id="timestamps"></div>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  // Aponta para o API Gateway. Pode ser sobrescrito com ?gateway=http://host:porta
+  // na URL, útil ao testar o gateway rodando em outra máquina/porta a partir da IDE.
+  const params = new URLSearchParams(window.location.search);
+  const GATEWAY_URL = params.get('gateway') || 'http://localhost:3000';
+
+  const $ = (id) => document.getElementById(id);
+  const form = $('searchForm');
+  const input = $('cityInput');
+  const suggestionsEl = $('suggestions');
+  const geoBtn = $('geoBtn');
+  const main = $('main');
+  const emptyState = $('emptyState');
+  const timestampsEl = $('timestamps');
+  const dots = { geo: $('dotGeo'), weather: $('dotWeather'), air: $('dotAir') };
+
+  $('gatewayNote').textContent = 'gateway: ' + GATEWAY_URL;
+
+  const WMO = {
+    0: ['Céu limpo', '☀️'], 1: ['Poucas nuvens', '🌤️'], 2: ['Parcialmente nublado', '⛅'], 3: ['Nublado', '☁️'],
+    45: ['Nevoeiro', '🌫️'], 48: ['Nevoeiro com geada', '🌫️'],
+    51: ['Garoa leve', '🌦️'], 53: ['Garoa', '🌦️'], 55: ['Garoa forte', '🌦️'],
+    56: ['Garoa congelante', '🌦️'], 57: ['Garoa congelante forte', '🌦️'],
+    61: ['Chuva leve', '🌧️'], 63: ['Chuva', '🌧️'], 65: ['Chuva forte', '🌧️'],
+    66: ['Chuva congelante', '🌧️'], 67: ['Chuva congelante forte', '🌧️'],
+    71: ['Neve leve', '❄️'], 73: ['Neve', '❄️'], 75: ['Neve forte', '❄️'], 77: ['Grãos de neve', '❄️'],
+    80: ['Pancadas de chuva', '🌦️'], 81: ['Pancadas de chuva', '🌧️'], 82: ['Pancadas fortes', '🌧️'],
+    85: ['Pancadas de neve', '🌨️'], 86: ['Pancadas de neve fortes', '🌨️'],
+    95: ['Tempestade', '⛈️'], 96: ['Tempestade com granizo', '⛈️'], 99: ['Tempestade forte com granizo', '⛈️']
+  };
+
+  function setDot(key, state) { dots[key].className = 'dot' + (state ? ' ' + state : ''); }
+
+  function aqiClass(aqi) {
+    if (aqi <= 40) return { cls: 'aqi-good', lbl: 'Boa' };
+    if (aqi <= 80) return { cls: 'aqi-mid', lbl: 'Moderada' };
+    return { cls: 'aqi-bad', lbl: 'Ruim' };
+  }
+  function barColor(value, thresholds) {
+    if (value <= thresholds[0]) return 'var(--sage)';
+    if (value <= thresholds[1]) return 'var(--amber)';
+    return 'var(--coral)';
+  }
+  function uvInfo(uv) {
+    if (uv < 3) return { color: 'var(--sage)', bg: 'var(--sage-bg)', lbl: 'Baixo', note: 'Exposição segura sem proteção extra.' };
+    if (uv < 6) return { color: 'var(--amber)', bg: 'var(--amber-bg)', lbl: 'Moderado', note: 'Use protetor solar em exposições longas.' };
+    if (uv < 8) return { color: 'var(--coral)', bg: 'var(--coral-bg)', lbl: 'Alto', note: 'Procure sombra no meio do dia e use protetor solar.' };
+    return { color: 'var(--coral)', bg: 'var(--coral-bg)', lbl: 'Muito alto', note: 'Evite o sol entre 10h e 16h; use protetor e chapéu.' };
+  }
+  function fmtTime(ts) {
+    if (!ts) return '—';
+    return new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  function statusToDot(s) {
+    if (s === 'live') return 'ok';
+    if (s === 'cache') return 'warn';
+    return 'err';
+  }
+
+  function renderError(msg) {
+    emptyState.style.display = 'none';
+    main.innerHTML = '<div class="card"><p class="error-note">' + msg + '</p></div>';
+  }
+
+  async function loadPlace(lat, lon, label) {
+    emptyState.style.display = 'none';
+    suggestionsEl.style.display = 'none';
+    main.innerHTML = '<div class="empty"><p>Consultando o API Gateway…</p></div>';
+    setDot('weather', 'pending');
+    setDot('air', 'pending');
+
+    try {
+      const url = GATEWAY_URL + '/api/environment?lat=' + lat + '&lon=' + lon + '&place=' + encodeURIComponent(label);
+      const res = await fetch(url);
+      const body = await res.json();
+
+      if (!res.ok) {
+        renderError(body.error || 'O gateway não conseguiu responder agora.');
+        return;
+      }
+
+      setDot('weather', statusToDot(body.status.weather));
+      setDot('air', statusToDot(body.status.airQuality));
+      timestampsEl.innerHTML =
+        '<span>resposta do gateway: ' + fmtTime(body.servedAt) + '</span>' +
+        '<span>clima: ' + body.status.weather + '</span>' +
+        '<span>qualidade do ar: ' + body.status.airQuality + '</span>';
+
+      renderPlace(label, body.weather, body.airQuality, body.status);
+    } catch (err) {
+      setDot('weather', 'err');
+      setDot('air', 'err');
+      renderError('Não foi possível falar com o API Gateway em ' + GATEWAY_URL + '. Ele está rodando? (docker-compose up)');
+    }
+  }
+
+  function renderPlace(label, weather, air, status) {
+    let html = '';
+
+    if (weather) {
+      const c = weather.current;
+      const [condName, emoji] = WMO[c.weather_code] || ['Condição desconhecida', '🌡️'];
+      html += '<div class="card">' +
+        '<p class="place-name">' + label + '</p>' +
+        (status.weather === 'cache' ? '<div class="cache-note">Dados de clima servidos do cache do gateway (serviço original indisponível).</div>' : '<p class="place-sub">atualizado agora</p>') +
+        '<div class="temp-row">' +
+          '<div class="temp-big">' + Math.round(c.temperature_2m) + '°</div>' +
+          '<div class="temp-meta"><div class="cond">' + emoji + ' ' + condName + '</div><div class="feel">Sensação de ' + Math.round(c.apparent_temperature) + '°C</div></div>' +
+        '</div>' +
+        '<div class="metrics-row">' +
+          '<div class="metric"><div class="k">Umidade</div><div class="v">' + c.relative_humidity_2m + '%</div></div>' +
+          '<div class="metric"><div class="k">Vento</div><div class="v">' + Math.round(c.wind_speed_10m) + ' km/h</div></div>' +
+          '<div class="metric"><div class="k">Precipitação</div><div class="v">' + c.precipitation + ' mm</div></div>' +
+        '</div>' +
+      '</div>';
+    } else {
+      html += '<div class="card"><p class="place-name">' + label + '</p><p class="error-note">Clima indisponível: serviço fora do ar e sem cache para este local.</p></div>';
+    }
+
+    if (air) {
+      const c = air.current;
+      const aqi = Math.round(c.european_aqi);
+      const a = aqiClass(aqi);
+      html += '<div class="card">' +
+        '<h2>Qualidade do ar</h2>' +
+        (status.airQuality === 'cache' ? '<div class="cache-note">Dados servidos do cache do gateway.</div>' : '') +
+        '<div class="aqi-badge ' + a.cls + '"><span class="num">' + aqi + '</span><span class="lbl">' + a.lbl + ' · IQA europeu</span></div>' +
+        '<div class="poll-grid">' +
+          pollutant('PM2.5', c.pm2_5, 'µg/m³', [15, 35]) +
+          pollutant('PM10', c.pm10, 'µg/m³', [45, 80]) +
+          pollutant('Ozônio (O₃)', c.ozone, 'µg/m³', [100, 160]) +
+          pollutant('NO₂', c.nitrogen_dioxide, 'µg/m³', [40, 100]) +
+        '</div>' +
+      '</div>';
+
+      const uv = uvInfo(c.uv_index);
+      html += '<div class="card"><h2>Índice UV</h2><div class="uv-row">' +
+        '<div class="uv-ring" style="background:' + uv.bg + ';color:' + uv.color + '">' + Math.round(c.uv_index) + '</div>' +
+        '<div class="uv-text"><div class="uv-lbl" style="color:' + uv.color + '">' + uv.lbl + '</div><div class="uv-note">' + uv.note + '</div></div>' +
+      '</div></div>';
+    } else {
+      html += '<div class="card"><h2>Qualidade do ar</h2><p class="error-note">Indisponível: serviço fora do ar e sem cache para este local.</p></div>';
+    }
+
+    main.innerHTML = html;
+  }
+
+  function pollutant(name, value, unit, thresholds) {
+    const v = Math.round(value * 10) / 10;
+    const pct = Math.min(100, (value / (thresholds[1] * 1.4)) * 100);
+    const color = barColor(value, thresholds);
+    return '<div class="poll"><div class="k">' + name + '</div>' +
+      '<div class="v">' + v + ' <span style="font-weight:400;color:var(--ink-soft);font-size:12px;">' + unit + '</span></div>' +
+      '<div class="bar"><span style="width:' + pct + '%;background:' + color + '"></span></div></div>';
+  }
+
+  async function searchCity(query) {
+    setDot('geo', 'pending');
+    suggestionsEl.style.display = 'none';
+    try {
+      const res = await fetch(GATEWAY_URL + '/api/geocode?q=' + encodeURIComponent(query));
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'erro no gateway');
+      setDot('geo', 'ok');
+
+      if (!data.results || data.results.length === 0) {
+        renderError('Nenhuma cidade encontrada para "' + query + '". Tente outro nome.');
+        return;
+      }
+      if (data.results.length === 1) {
+        const r = data.results[0];
+        loadPlace(r.latitude, r.longitude, r.name + (r.admin1 ? ', ' + r.admin1 : '') + (r.country ? ', ' + r.country : ''));
+        return;
+      }
+      suggestionsEl.innerHTML = data.results.map(r => {
+        const label = r.name + (r.admin1 ? ', ' + r.admin1 : '') + (r.country ? ', ' + r.country : '');
+        return '<li><button type="button" data-lat="' + r.latitude + '" data-lon="' + r.longitude + '" data-label="' + label.replace(/"/g, '&quot;') + '">' +
+          r.name + ' <span class="muted">' + (r.admin1 ? r.admin1 + ', ' : '') + (r.country || '') + '</span></button></li>';
+      }).join('');
+      suggestionsEl.style.display = 'block';
+    } catch (e) {
+      setDot('geo', 'err');
+      renderError('Não foi possível falar com o API Gateway em ' + GATEWAY_URL + '. Ele está rodando? (docker-compose up)');
+    }
+  }
+
+  suggestionsEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-lat]');
+    if (!btn) return;
+    loadPlace(parseFloat(btn.dataset.lat), parseFloat(btn.dataset.lon), btn.dataset.label);
+  });
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const q = input.value.trim();
+    if (q) searchCity(q);
+  });
+
+  geoBtn.addEventListener('click', () => {
+    if (!navigator.geolocation) { renderError('Geolocalização não é suportada neste navegador.'); return; }
+    setDot('geo', 'pending');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { setDot('geo', 'ok'); loadPlace(pos.coords.latitude, pos.coords.longitude, 'Sua localização'); },
+      () => { setDot('geo', 'err'); renderError('Não foi possível acessar sua localização. Permita o acesso ou busque uma cidade pelo nome.'); },
+      { timeout: 8000 }
+    );
+  });
+})();
+</script>
+</body>
+</html>

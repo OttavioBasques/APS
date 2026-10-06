@@ -1,0 +1,16 @@
+{
+  "name": "air-quality-service",
+  "version": "1.0.0",
+  "description": "Microsservico distribuido: qualidade do ar e indice UV (Open-Meteo Air Quality). Publica alertas via Redis Pub/Sub.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ioredis": "^5.4.1"
+  }
+}
