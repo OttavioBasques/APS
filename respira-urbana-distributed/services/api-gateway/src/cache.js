@@ -24,9 +24,9 @@ export async function getCached(key) {
   }
 }
 
-export async function setCached(key, value) {
+export async function setCached(key, value, ttlSeconds = TTL) {
   try {
-    await redis.set(key, JSON.stringify(value), 'EX', TTL);
+    await redis.set(key, JSON.stringify(value), 'EX', ttlSeconds);
   } catch (err) {
     console.error('[api-gateway] falha ao gravar cache:', err.message);
   }

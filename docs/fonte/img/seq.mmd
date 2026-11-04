@@ -1,0 +1,25 @@
+sequenceDiagram
+    participant U as Cliente (celular)
+    participant G as api-gateway
+    participant R as Redis
+    participant W as weather-service
+    participant A as air-quality-service
+    participant K as risk-service
+    participant T as traffic-service
+    participant S as alert-service
+    U->>G: GET /api/environment?lat&lon
+    G->>R: GET env:lat,lon (cache)
+    par chamadas em paralelo (Promise.allSettled)
+        G->>W: GET /weather
+        G->>A: GET /air-quality
+        G->>K: GET /flood e /inversion
+        G->>T: GET /flow
+    end
+    A--)R: PUBLISH air-quality-alerts (se IQA >= 80)
+    R--)S: mensagem entregue ao assinante
+    W-->>G: clima
+    A-->>G: qualidade do ar
+    K-->>G: riscos
+    T-->>G: trânsito (ou falha)
+    G->>R: SET env:lat,lon (TTL 300 s)
+    G-->>U: JSON + status de cada parte (live / cache / unavailable)

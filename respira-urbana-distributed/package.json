@@ -1,0 +1,8 @@
+{
+  "name": "respira-urbana-distributed",
+  "private": true,
+  "description": "Testes offline do projeto (Node 22+): npm test",
+  "scripts": {
+    "test": "node --test --test-force-exit tests/*.test.mjs"
+  }
+}

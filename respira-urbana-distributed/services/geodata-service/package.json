@@ -1,0 +1,16 @@
+{
+  "name": "geodata-service",
+  "version": "1.0.0",
+  "description": "Microsservico distribuido: dados geograficos do OpenStreetMap (transporte publico, reservatorios e areas protegidas) via Overpass API, com cache no Redis.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ioredis": "^5.4.1"
+  }
+}

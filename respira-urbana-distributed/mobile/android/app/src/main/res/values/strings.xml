@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Respira Urbana</string>
+    <string name="title_activity_main">Respira Urbana</string>
+    <string name="package_name">br.respiraurbana.app</string>
+    <string name="custom_url_scheme">br.respiraurbana.app</string>
+</resources>

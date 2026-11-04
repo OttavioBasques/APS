@@ -1,155 +1,188 @@
-# Respira Urbana — Sistema Distribuído
+# Respira Urbana — Monitoramento Ambiental Urbano (Sistema Distribuído)
 
-Aplicativo de informações ambientais urbanas (clima + qualidade do ar) construído
-como um sistema distribuído de verdade: um cliente, um API Gateway e três
-microsserviços independentes, com cache compartilhado e um canal de eventos
-assíncrono.
+Aplicativo web/mobile que **mostra e monitora**, num único mapa:
+
+| Tema | O que mostra | Fonte |
+|---|---|---|
+| 🌫️ Poluição do ar | Mapa de calor do IQA europeu, poluentes, UV, alerta de IQA ruim | Open-Meteo Air Quality |
+| 🚦 Trânsito | Fluxo em tempo real, acidentes, obras e vias interditadas + lista de incidentes da área | TomTom Traffic |
+| 🚌 Transporte público | Estações de metrô/trem/VLT, terminais e (em zoom alto) pontos de ônibus | OpenStreetMap (Overpass) |
+| 🌊 Alagamento e inundação | Mapa de chuva prevista (24 h) classificada em níveis + vazão prevista dos rios | Open-Meteo Forecast + Flood (GloFAS) |
+| 🌡️ Inversão térmica | Mapa e janelas de inversão nas próximas 24 h, com aviso de poluentes retidos (vento fraco) | Open-Meteo (perfil vertical) |
+| 💧 Mananciais | Camada de **referência**: represas, lagos e áreas protegidas | OpenStreetMap (Overpass) |
+| 🌳 Desmatamento | Camada de **referência**: perda de cobertura arbórea | Global Forest Watch (UMD/Hansen) |
+| ☁️ Clima | Temperatura, chuva, vento, nuvens, pressão (camadas globais) | OpenWeatherMap + Open-Meteo |
+
+Além do mapa: **alertas automáticos** (um serviço verifica periodicamente as cidades configuradas
+e gera alertas de ar, alagamento, inversão térmica e trânsito) e um **painel das cidades monitoradas**.
+
+> **Escopo:** somente leitura — monitoramento e alertas. Não há cadastro de ocorrências, banco de
+> dados nem login de gestor. As camadas de mananciais e desmatamento são **referências** para
+> contextualizar o mapa; **não detectam nem registram invasões** (isso exigiria imagens de satélite
+> ou denúncias, e não é feito aqui).
+>
+> Os níveis de risco são estimativas de apoio baseadas em modelos de previsão e **não substituem
+> os alertas oficiais** da Defesa Civil, INMET e CEMADEN.
 
 ## Arquitetura
 
 ```mermaid
 flowchart TB
-    subgraph Cliente
-        C[App Web / PWA<br/>client/index.html]
-    end
+    C[Cliente web<br/>client/index.html] -->|HTTP/REST| GW[api-gateway :3000]
 
-    subgraph Borda
-        GW[API Gateway<br/>porta 3000]
-    end
+    GW --> GEO[geocoding-service :3001]
+    GW --> WEA[weather-service :3002]
+    GW --> AIR[air-quality-service :3003]
+    GW --> RISK[risk-service :3005<br/>alagamento + inversão]
+    GW --> GD[geodata-service :3006<br/>transporte + mananciais]
+    GW --> TRF[traffic-service :3008<br/>TomTom]
+    GW --> ALERT[alert-service :3004]
+    GW <-->|cache| REDIS[(Redis)]
 
-    subgraph "Microsserviços internos (nunca expostos ao cliente)"
-        GEO[geocoding-service<br/>porta 3001]
-        WEA[weather-service<br/>porta 3002]
-        AIR[air-quality-service<br/>porta 3003]
-    end
-
-    subgraph Infra
-        REDIS[(Redis<br/>cache + pub/sub)]
-        ALERT[alert-service<br/>porta 3004]
-    end
-
-    C -- HTTP/REST --> GW
-    GW -- REST síncrono --> GEO
-    GW -- REST síncrono --> WEA
-    GW -- REST síncrono --> AIR
-    GW <-- cache get/set --> REDIS
-    AIR -- publish 'air-quality-alerts' --> REDIS
+    AIR -- publish air-quality-alerts --> REDIS
     REDIS -- subscribe --> ALERT
+    ALERT -. monitora a cada 15 min .-> RISK
+    ALERT -.-> AIR
+    ALERT -.-> TRF
+    TRF <-->|cache de tiles| REDIS
+    GD <-->|cache| REDIS
 
-    GEO -.-> OM1[Open-Meteo Geocoding API]
-    WEA -.-> OM2[Open-Meteo Forecast API]
-    AIR -.-> OM3[Open-Meteo Air Quality API]
+    WEA -.-> OM[Open-Meteo]
+    AIR -.-> OM
+    RISK -.-> OM
+    GEO -.-> OM
+    GD -.-> OSM[Overpass / OSM]
+    TRF -.-> TT[TomTom]
 ```
 
-### Por que isso é um sistema distribuído, e não só "vários arquivos"
+Pontos principais:
 
-- **Processos independentes**: cada serviço roda no seu próprio container/processo Node,
-  com seu próprio `package.json`, e pode ser reiniciado, escalado ou substituído sem
-  tocar nos outros.
-- **Duas formas de comunicação**:
-  - **Síncrona (REST)**: Gateway → geocoding/weather/air-quality. Chamadas em paralelo
-    via `Promise.allSettled` — uma falha não derruba a outra.
-  - **Assíncrona (Pub/Sub)**: `air-quality-service` publica um evento no Redis quando o
-    índice de qualidade do ar passa de um limite; `alert-service` consome esse evento
-    sem que os dois serviços se conheçam ou estejam no ar ao mesmo tempo.
-- **Estado compartilhado explícito**: o cache no Redis é a única coisa que os serviços
-  dividem, e é acessado por rede — não por memória compartilhada.
-- **Tolerância a falha parcial**: se `weather-service` cair, o Gateway ainda responde com
-  os dados de qualidade do ar (ou com o último valor em cache), e o cliente mostra isso
-  na interface (`status.weather = "cache"` / `"unavailable"`).
-- **Nenhum ponto único de conhecimento**: o cliente só conhece o Gateway; o Gateway não
-  sabe que existe um `alert-service`; o `alert-service` não sabe que existe um Gateway.
+- **Processos independentes** — cada serviço tem seu `package.json`, container e porta.
+- **Comunicação síncrona (REST)** — o gateway chama os serviços em paralelo com
+  `Promise.allSettled`: se um cair, o resto responde e o cliente mostra o status de cada parte.
+- **Comunicação assíncrona (Pub/Sub no Redis)** — `air-quality-service` publica `air-quality-alerts`;
+  `alert-service` consome sem que um conheça o outro.
+- **Monitoramento ativo** — `alert-service` consulta sozinho `risk-service`, `air-quality-service`
+  e `traffic-service` para os locais de `MONITOR_LOCATIONS` e guarda alertas (com deduplicação) e a
+  situação de cada cidade no Redis.
+- **Chaves protegidas** — a chave da TomTom **nunca** vai ao navegador: os tiles passam por
+  gateway → `traffic-service` (com cache no Redis, que também economiza a cota gratuita).
+  A chave da OpenWeatherMap vai ao navegador (os tiles são carregados direto de lá), por isso use
+  a chave gratuita.
+- **Cache** — Redis para respostas, grades do mapa, tiles de trânsito e consultas ao Overpass.
 
-## Estrutura de pastas
+## Estrutura
 
 ```
 respira-urbana-distributed/
-├── docker-compose.yml        # orquestra tudo (Redis + 5 serviços + client)
-├── .env.example               # variáveis para rodar sem Docker
-├── client/
-│   └── index.html              # app web, fala só com o api-gateway
+├── docker-compose.yml
+├── .env / .env.example          # chaves e configuração (o .env NÃO vai para o Git)
+├── client/index.html            # app web (Leaflet), fala só com o gateway
+├── mobile/                      # app Android (Capacitor)
+├── scripts/check-apis.mjs       # testa de verdade cada API externa (veja abaixo)
+├── tests/                       # npm test (Node 22, sem rede)
 └── services/
-    ├── api-gateway/            # porta 3000 — orquestração + cache
-    ├── geocoding-service/       # porta 3001 — nome de cidade → coordenadas
-    ├── weather-service/         # porta 3002 — clima atual
-    ├── air-quality-service/     # porta 3003 — qualidade do ar + publica alertas
-    └── alert-service/           # porta 3004 — consome alertas (Pub/Sub)
+    ├── api-gateway/             # :3000  porta de entrada, cache, proxy de tiles
+    ├── geocoding-service/       # :3001  cidade → coordenadas
+    ├── weather-service/         # :3002  clima e grade de chuva
+    ├── air-quality-service/     # :3003  IQA, grade de poluição, publica alertas
+    ├── alert-service/           # :3004  feed de alertas + monitoramento ativo
+    ├── risk-service/            # :3005  alagamento (chuva + vazão) e inversão térmica
+    ├── geodata-service/         # :3006  Overpass: transporte público e mananciais
+    └── traffic-service/         # :3008  TomTom: tiles, incidentes, fluxo
 ```
 
-## Rodando com Docker (recomendado)
+## App Android
 
-Pré-requisito: Docker e Docker Compose instalados.
+A pasta `mobile/` empacota este mesmo client como app Android (Capacitor), com tela para informar o endereço
+do servidor. Passo a passo em [`mobile/README.md`](mobile/README.md). A versão web não muda.
+
+## Rodando (Docker)
 
 ```bash
-cd respira-urbana-distributed
 docker-compose up --build
 ```
 
-Isso sobe: Redis, os quatro microsserviços, o Gateway e um Nginx servindo o cliente.
+- App: **http://localhost:8080** · Gateway: **http://localhost:3000**
+- Cada serviço expõe `/health` na própria porta.
+- Hot-reload: código em `services/*/src/` e `client/` é recarregado ao salvar (Node `--watch` +
+  volumes). Mudou `package.json`, `Dockerfile` ou `docker-compose.yml`? Rode `up --build` de novo.
+- Parar: `docker-compose down`.
 
-- App: **http://localhost:8080**
-- Gateway: **http://localhost:3000** (`/health`, `/api/geocode?q=`, `/api/environment?lat=&lon=`)
-- Cada serviço interno também expõe `/health` na sua porta (3001–3004), útil para debug.
+> Se você já tinha uma versão anterior rodando, use `docker-compose up --build --remove-orphans`
+> (remove os containers de Postgres e ocorrências, que não existem mais).
 
-Para derrubar tudo: `docker-compose down` (adicione `-v` para limpar o Redis também).
+## Configuração (`.env`)
 
-## Rodando manualmente em uma IDE (sem Docker)
+| Variável | Para quê |
+|---|---|
+| `OPENWEATHER_API_KEY` | Camadas de clima do mapa. Gratuita em openweathermap.org (chaves novas podem levar horas para ativar). |
+| `TOMTOM_API_KEY` | Trânsito. Gratuita em developer.tomtom.com. **Vazia = tema Trânsito desativado** (o resto funciona). |
+| `DEFORESTATION_TILES_URL` | Tiles XYZ do desmatamento. Vazia = padrão GFW/Hansen v1.8 (perda de cobertura arbórea até 2022). Para dados mais novos, troque a versão na URL. |
+| `MONITOR_LOCATIONS` | Cidades vigiadas: `Nome:lat:lon;Nome:lat:lon`. Vazia = 6 capitais brasileiras. |
+| `MONITOR_INTERVAL_SECONDS` | Intervalo entre verificações (padrão 900). |
+| `AQI_ALERT_THRESHOLD` | IQA a partir do qual há alerta de ar (padrão 80). |
 
-Útil para debugar um serviço de cada vez com breakpoints.
+## Como usar o mapa
 
-Pré-requisitos: Node.js 18+ e um Redis local (`redis-server`, ou `docker run -p 6379:6379 redis:7-alpine`).
+- Barra inferior, linha 1: **camada de clima** (uma por vez). Linha 2: **temas de monitoramento**
+  (ligue quantos quiser; a escolha fica salva no navegador).
+- A **legenda** (canto inferior esquerdo) mostra as cores de tudo que está ligado.
+- **Pinos (focos)**: com poluição, alagamento, inversão ou trânsito ligados, o mapa marca os pontos críticos
+  (células com IQA ≥ 60, chuva de risco alto, inversão moderada/forte, acidentes e interdições) e os locais com
+  alerta ativo. Toque num pino para ver o detalhe. Em escala continental só aparecem os pinos de alertas.
+- **Clique/toque no mapa**: pop-up com o valor da camada de clima e dos temas ligados naquele ponto
+  (IQA, nível de alagamento, inversão, velocidade da via). O botão do pop-up seleciona o ponto.
+- Abaixo do mapa: resumo do local (clima, ar, UV), **cartão de riscos** (alagamento com motivos,
+  inversão com horário do pico, trânsito), **alertas**, **cidades monitoradas** (toque para abrir)
+  e, com o tema Trânsito ligado e o mapa aproximado, **incidentes da área**.
+- Alguns temas pedem **aproximar o mapa** (limites das APIs): trânsito/incidentes até ~0,8°,
+  mananciais até ~1,5°, estações até ~2°, pontos de ônibus até ~0,2°. A legenda avisa quando falta zoom.
 
-1. Copie `.env.example` para `.env` e ajuste se necessário.
-2. Abra um terminal por serviço (a IDE facilita isso — ex.: painéis de terminal do VS Code):
+## Verificando as APIs de verdade (`check-apis`)
 
-```bash
-# Terminal 1
-cd services/geocoding-service && npm install && npm run dev
-
-# Terminal 2
-cd services/weather-service && npm install && npm run dev
-
-# Terminal 3
-cd services/air-quality-service && npm install && npm run dev
-
-# Terminal 4
-cd services/alert-service && npm install && npm run dev
-
-# Terminal 5
-cd services/api-gateway && npm install && npm run dev
-```
-
-3. Sirva `client/index.html` com qualquer servidor estático (ex.: extensão "Live Server"
-   do VS Code, ou `npx serve client`). Se o Gateway não estiver em `localhost:3000`, abra
-   o app com `?gateway=http://SEU_HOST:PORTA` na URL.
-
-## Testando cada serviço isoladamente
-
-```bash
-curl "http://localhost:3001/geocode?q=Botucatu"
-curl "http://localhost:3002/weather?lat=-22.88&lon=-48.44"
-curl "http://localhost:3003/air-quality?lat=-22.88&lon=-48.44"
-curl "http://localhost:3000/api/environment?lat=-22.88&lon=-48.44&place=Botucatu"
-curl "http://localhost:3004/last-alert"
-```
-
-Para forçar um alerta e ver o `alert-service` reagir nos logs, baixe temporariamente
-`AQI_ALERT_THRESHOLD` no `air-quality-service` (ex.: para `1`) e refaça a consulta —
-qualquer cidade vai disparar o evento.
-
-## Simulando falha de um serviço (para ver a tolerância a falhas)
+Os testes automáticos (`npm test`) usam respostas **simuladas**; só você, com internet e suas chaves,
+consegue confirmar que as APIs reais respondem como o código espera. Rode:
 
 ```bash
-docker-compose stop weather-service
-curl "http://localhost:3000/api/environment?lat=-22.88&lon=-48.44&place=Botucatu"
-# resposta ainda vem, com status.weather = "cache" (se já houver algo salvo) ou "unavailable"
-docker-compose start weather-service
+node scripts/check-apis.mjs
+# sem Node instalado:
+docker run --rm -v "$PWD":/w -w /w node:22-alpine node scripts/check-apis.mjs
 ```
 
-## Possíveis evoluções
+Ele testa Open-Meteo (clima, ar, vazão, perfil vertical, geocodificação), Overpass, tiles da
+OpenWeatherMap, TomTom (tiles, incidentes, fluxo), Global Forest Watch e o seu gateway local.
+Se algo falhar, a linha indica o HTTP e a dica (por exemplo, versão do GFW).
 
-- Trocar Redis por um message broker dedicado (RabbitMQ/Kafka) se o volume de eventos crescer.
-- Adicionar um service registry (Consul) em vez de URLs fixas por variável de ambiente.
-- Colocar o Gateway atrás de um load balancer com múltiplas réplicas.
-- Persistir alertas em um banco em vez de só logar (`alert-service`).
-- Empacotar o `client/` como app móvel real (React Native / Capacitor) apontando para o Gateway.
+## Testes
+
+```bash
+npm test      # Node 22+; sem rede e sem npm install
+```
+
+Cobre: funções puras (grade, alagamento, inversão, TomTom, alertas), o backend inteiro de ponta a ponta
+(gateway + todos os serviços + Redis em memória, com as APIs externas simuladas) e a lógica do cliente
+(DOM/Leaflet simulados).
+
+## Endpoints do gateway
+
+`/api/config` · `/api/geocode?q=` · `/api/environment?lat=&lon=` · `/api/point?lat=&lon=&include=weather,air,flood,inversion,traffic` ·
+`/api/grid/{air,rain,inversion}?south=&west=&north=&east=` · `/api/transit?…&scope=stations|all` · `/api/watersheds?…` ·
+`/api/traffic/{status,incidents,flow}` · `/api/traffic/tiles/{flow|incidents}/{z}/{x}/{y}.png` · `/api/alerts` · `/api/monitor`
+
+## Limitações conhecidas
+
+- **Alagamento** é estimado por chuva prevista + vazão de rios (modelo global de 5 km); não conhece
+  bueiros, relevo urbano nem pontos históricos de alagamento.
+- **Inversão térmica** é inferida do perfil vertical previsto (modelo), não de radiossondagem.
+- **Mananciais**: o OSM mostra represas, lagos e áreas protegidas, não o limite legal da área de proteção.
+- **Desmatamento**: tiles globais do GFW (perda de cobertura arbórea, com defasagem de meses). Sem alertas
+  em tempo quase real; o INPE/DETER cobre só Amazônia, Cerrado e Pantanal e não foi integrado.
+- **Trânsito**: sujeito aos limites do plano gratuito da TomTom; a cobertura varia por país.
+- Overpass é um serviço público compartilhado: o projeto limita área, faz cache e espaça as chamadas.
+
+## Evoluções possíveis
+
+Notificações push/e-mail no `alert-service`; DETER/INPE para a Amazônia; linhas (não só paradas) de transporte;
+histórico de alertas em banco; múltiplas réplicas do gateway atrás de um load balancer; empacotar o cliente
+como app móvel (Capacitor).

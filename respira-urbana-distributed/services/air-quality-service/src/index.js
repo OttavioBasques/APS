@@ -1,5 +1,6 @@
 import express from 'express';
 import Redis from 'ioredis';
+import { parseGridParams, cellCenters, asArray } from './grid.js';
 
 const app = express();
 const PORT = process.env.PORT || 3003;
@@ -20,7 +21,7 @@ app.get('/health', (req, res) => {
 });
 
 app.get('/air-quality', async (req, res) => {
-  const { lat, lon, place } = req.query;
+  const { lat, lon, place, quiet } = req.query;
   if (!lat || !lon) {
     return res.status(400).json({ error: 'parametros "lat" e "lon" sao obrigatorios' });
   }
@@ -36,7 +37,8 @@ app.get('/air-quality', async (req, res) => {
     const data = await upstream.json();
 
     const aqi = data.current?.european_aqi;
-    if (typeof aqi === 'number' && aqi >= ALERT_THRESHOLD) {
+    // quiet=1: consulta pontual (clique no mapa) nao deve gerar alerta
+    if (quiet !== '1' && typeof aqi === 'number' && aqi >= ALERT_THRESHOLD) {
       publishAlert({ lat, lon, place: place || null, aqi }).catch((err) => {
         console.error('[air-quality-service] falha ao publicar alerta:', err.message);
       });
@@ -45,6 +47,35 @@ app.get('/air-quality', async (req, res) => {
     res.json({ current: data.current });
   } catch (err) {
     console.error('[air-quality-service] erro:', err.message);
+    res.status(502).json({ error: 'servico de qualidade do ar upstream indisponivel', detail: err.message });
+  }
+});
+
+// Mapa de poluicao: IQA europeu em cada celula de uma grade (uma chamada em lote).
+app.get('/air-grid', async (req, res) => {
+  const g = parseGridParams(req.query);
+  if (g.error) return res.status(400).json({ error: g.error });
+  const centers = cellCenters(g);
+
+  try {
+    const url =
+      'https://air-quality-api.open-meteo.com/v1/air-quality' +
+      `?latitude=${centers.map((c) => c.lat).join(',')}&longitude=${centers.map((c) => c.lon).join(',')}` +
+      '&current=european_aqi,pm2_5,pm10&timezone=auto';
+    const upstream = await fetchWithTimeout(url, 12000);
+    if (!upstream.ok) throw new Error(`upstream respondeu ${upstream.status}`);
+    const data = await upstream.json();
+
+    const cells = asArray(data).map((item, idx) => ({
+      lat: centers[idx].lat,
+      lon: centers[idx].lon,
+      aqi: item.current?.european_aqi ?? null,
+      pm25: item.current?.pm2_5 ?? null,
+      pm10: item.current?.pm10 ?? null
+    }));
+    res.json({ cells, step: g.step, rows: g.rows, cols: g.cols });
+  } catch (err) {
+    console.error('[air-quality-service] erro na grade:', err.message);
     res.status(502).json({ error: 'servico de qualidade do ar upstream indisponivel', detail: err.message });
   }
 });

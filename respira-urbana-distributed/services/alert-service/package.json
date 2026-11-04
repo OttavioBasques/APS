@@ -1,7 +1,7 @@
 {
   "name": "alert-service",
   "version": "1.0.0",
-  "description": "Consumidor assincrono: escuta alertas de qualidade do ar via Redis Pub/Sub e reage a eles.",
+  "description": "Alertas ambientais: consome eventos via Redis Pub/Sub e monitora locais configurados (ar, alagamento, inversao termica, transito).",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

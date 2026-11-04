@@ -1,0 +1,19 @@
+flowchart LR
+    C["Cliente móvel<br/>(navegador do celular)<br/>index.html + Leaflet"] -->|"HTTP/REST<br/>JSON"| GW["api-gateway<br/>:3000"]
+    GW --> GEO["geocoding-service :3001"]
+    GW --> WEA["weather-service :3002"]
+    GW --> AIR["air-quality-service :3003"]
+    GW --> RISK["risk-service :3005<br/>alagamento + inversão"]
+    GW --> GD["geodata-service :3006<br/>transporte + mananciais"]
+    GW --> TRF["traffic-service :3008"]
+    GW --> ALERT["alert-service :3004"]
+    GW <-->|cache| REDIS[("Redis<br/>cache + Pub/Sub")]
+    AIR -. "publish" .-> REDIS
+    REDIS -. "subscribe" .-> ALERT
+    ALERT -. "monitoramento<br/>a cada 15 min" .-> RISK
+    GEO --> OM["Open-Meteo<br/>(clima, ar, chuva,<br/>vazão, geocodificação)"]
+    WEA --> OM
+    AIR --> OM
+    RISK --> OM
+    GD --> OSM["Overpass /<br/>OpenStreetMap"]
+    TRF --> TT["TomTom Traffic"]

@@ -1,0 +1,16 @@
+{
+  "name": "traffic-service",
+  "version": "1.0.0",
+  "description": "Microsservico distribuido: transito em tempo real (TomTom). Guarda a chave no servidor, serve tiles de fluxo/incidentes com cache no Redis e resume incidentes e fluxo de um ponto.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ioredis": "^5.4.1"
+  }
+}

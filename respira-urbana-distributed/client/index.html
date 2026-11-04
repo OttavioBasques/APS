@@ -4,15 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Respira Urbana</title>
+<script>try{var t=localStorage.getItem("respira:theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
   :root {
     box-sizing: border-box;
-    padding-top: env(safe-area-inset-top, 0px);
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-
     --bg: #F2F7F5;
     --panel: #FFFFFF;
     --ink: #10262A;
@@ -48,35 +47,99 @@
   html, body { height: 100%; margin: 0; background: var(--bg); color: var(--ink);
     font-family: 'Inter', -apple-system, sans-serif; -webkit-font-smoothing: antialiased; }
 
-  .wrap { max-width: 480px; margin: 0 auto; padding: 20px 18px calc(40px + env(safe-area-inset-bottom, 0px)); min-height: 100%; }
+  /* --- mapa em destaque, ocupando a largura inteira da tela --- */
+  .map-hero {
+    position: relative;
+    width: 100%;
+    height: clamp(440px, 72vh, 700px);
+    background: var(--line);
+    overflow: hidden;
+  }
+  #map { position: absolute; inset: 0; }
+  :root[data-theme="dark"] #map .leaflet-layer:first-child { filter: saturate(0.6) brightness(0.92) invert(0.93) hue-rotate(180deg); }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) #map .leaflet-layer:first-child { filter: saturate(0.6) brightness(0.92) invert(0.93) hue-rotate(180deg); }
+  }
 
-  header { padding-top: max(18px, env(safe-area-inset-top, 0px)); margin-bottom: 18px; }
-  .wordmark { font-family: 'Fraunces', serif; font-size: 30px; font-weight: 600; letter-spacing: -0.01em;
-    margin: 0; display: flex; align-items: baseline; gap: 8px; }
-  .wordmark span.leaf { font-size: 20px; }
-  .tagline { color: var(--ink-soft); font-size: 14px; margin: 4px 0 0; max-width: 34ch; }
-  .gateway-note { color: var(--ink-soft); font-size: 11.5px; margin: 6px 0 0; font-variant-numeric: tabular-nums; }
+  .hero-topbar {
+    position: absolute;
+    top: max(14px, env(safe-area-inset-top, 0px));
+    left: 14px; right: 14px;
+    z-index: 500;
+  }
+  .hero-row {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--panel);
+    border-radius: 14px;
+    padding: 7px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+  }
+  .hero-row .wordmark-sm {
+    font-family: 'Fraunces', serif; font-weight: 600; font-size: 16px;
+    display: flex; align-items: center; gap: 5px; padding: 0 2px 0 4px; white-space: nowrap; color: var(--ink);
+  }
+  .hero-row form { display: contents; }
+  .hero-row input[type="text"] {
+    flex: 1; min-width: 0; border: none; background: transparent; font-size: 14px;
+    padding: 7px 4px; outline: none; color: var(--ink); font-family: 'Inter', sans-serif;
+  }
+  .icon-btn {
+    flex-shrink: 0; width: 34px; height: 34px; border-radius: 9px; border: none;
+    background: var(--accent); color: var(--bg); font-size: 15px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .icon-btn.ghost { background: var(--sage-bg); color: var(--accent); }
+  .icon-btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 
-  form.search { display: flex; gap: 8px; margin-top: 16px; }
-  input[type="text"] { flex: 1; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line);
-    background: var(--panel); color: var(--ink); font-size: 15px; font-family: 'Inter', sans-serif; outline: none; }
-  input[type="text"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  button { font-family: 'Inter', sans-serif; font-weight: 600; border: none; cursor: pointer; }
-  .btn-primary { background: var(--accent); color: var(--bg); border-radius: 10px; padding: 12px 16px; font-size: 15px; }
-  .btn-primary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-  .btn-geo { background: none; color: var(--accent); font-size: 13px; padding: 8px 0 0; text-decoration: underline; text-underline-offset: 3px; }
-  .btn-geo:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .hero-suggestions {
+    margin-top: 6px; background: var(--panel); border-radius: 12px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.18); overflow: hidden; z-index: 600;
+  }
+  .hero-suggestions li { list-style: none; }
+  .hero-suggestions li button {
+    width: 100%; text-align: left; background: none; border: none; cursor: pointer;
+    color: var(--ink); padding: 11px 14px; font-size: 14px; font-weight: 500;
+    border-bottom: 1px solid var(--line); font-family: 'Inter', sans-serif;
+  }
+  .hero-suggestions li:last-child button { border-bottom: none; }
+  .hero-suggestions li button:hover, .hero-suggestions li button:focus-visible { background: var(--sage-bg); }
+  .hero-suggestions .muted { color: var(--ink-soft); font-weight: 400; }
 
-  .suggestions { list-style: none; margin: 8px 0 0; padding: 0; border: 1px solid var(--line);
-    border-radius: 10px; overflow: hidden; background: var(--panel); }
-  .suggestions li button { width: 100%; text-align: left; background: none; color: var(--ink);
-    padding: 11px 14px; font-size: 14px; font-weight: 500; border-bottom: 1px solid var(--line); }
-  .suggestions li:last-child button { border-bottom: none; }
-  .suggestions li button:hover, .suggestions li button:focus-visible { background: var(--sage-bg); }
-  .suggestions li button .muted { color: var(--ink-soft); font-weight: 400; }
+  .hero-filters {
+    position: absolute;
+    left: 14px; right: 14px;
+    bottom: max(14px, env(safe-area-inset-bottom, 0px));
+    z-index: 500;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .filter-row { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+  .filter-row::-webkit-scrollbar { display: none; }
+  .filter-pill.theme.active { background: var(--coral); color: var(--panel); }
+  .filter-pill .warn-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--amber); margin-left: 6px; }
+  .filter-pill {
+    flex-shrink: 0; font-family: 'Inter', sans-serif; font-weight: 600; font-size: 12.5px;
+    background: var(--panel); color: var(--ink); border: none; cursor: pointer;
+    padding: 9px 14px; border-radius: 999px; box-shadow: 0 3px 10px rgba(0,0,0,0.16);
+  }
+  .filter-pill.active { background: var(--accent); color: var(--bg); }
+  .filter-pill[disabled] { opacity: 0.4; cursor: not-allowed; }
+  .hero-note {
+    position: absolute; z-index: 500; left: 14px; right: 14px;
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px) + 92px);
+    font-size: 11.5px; color: var(--panel); text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+  }
 
-  /* status agora reflete a resposta do gateway: live (verde) / cache (ambar) / unavailable (vermelho) */
-  .status-strip { display: flex; gap: 14px; margin-top: 18px; padding: 10px 12px; border: 1px solid var(--line);
+  .weather-pin { display: flex; align-items: center; justify-content: center; width: 38px; height: 38px;
+    border-radius: 50% 50% 50% 0; transform: rotate(-45deg); box-shadow: 0 2px 6px rgba(0,0,0,0.25); border: 2px solid var(--panel); }
+  .weather-pin span { transform: rotate(45deg); font-size: 17px; }
+  .leaflet-popup-content-wrapper { border-radius: 10px; }
+
+  /* --- conteúdo abaixo do mapa --- */
+  .wrap { max-width: 480px; margin: 0 auto; padding: 16px 18px calc(40px + env(safe-area-inset-bottom, 0px)); }
+
+  .tagline { color: var(--ink-soft); font-size: 13.5px; margin: 0 0 14px; }
+
+  .status-strip { display: flex; gap: 14px; padding: 10px 12px; border: 1px solid var(--line);
     border-radius: 10px; background: var(--panel); font-size: 12px; color: var(--ink-soft); flex-wrap: wrap; }
   .status-item { display: flex; align-items: center; gap: 6px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dot-idle); flex-shrink: 0; }
@@ -86,8 +149,8 @@
   .dot.err { background: var(--coral); }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-  main { margin-top: 20px; display: flex; flex-direction: column; gap: 14px; }
-  .empty { text-align: left; padding: 40px 4px; color: var(--ink-soft); }
+  main { margin-top: 14px; display: flex; flex-direction: column; gap: 14px; }
+  .empty { text-align: left; padding: 24px 4px; color: var(--ink-soft); }
   .empty p { margin: 0; font-size: 15px; line-height: 1.6; max-width: 32ch; }
 
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 18px 16px; }
@@ -103,10 +166,15 @@
   .temp-meta .cond { font-size: 15px; font-weight: 600; }
   .temp-meta .feel { font-size: 13px; color: var(--ink-soft); }
 
-  .metrics-row { display: flex; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
-  .metric { flex: 1; }
-  .metric .k { font-size: 11px; color: var(--ink-soft); margin-bottom: 3px; }
-  .metric .v { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .layer-list { display: grid; }
+  .layer-row { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px;
+    padding: 10px 0; border-top: 1px solid var(--line); }
+  .layer-row:first-child { border-top: none; padding-top: 2px; }
+  .lr-icon { font-size: 18px; text-align: center; }
+  .lr-label { font-size: 13px; font-weight: 600; }
+  .lr-sub { font-size: 12px; color: var(--ink-soft); margin-top: 1px; }
+  .lr-value { font-family: 'Fraunces', serif; font-size: 20px; font-weight: 500; text-align: right;
+    font-variant-numeric: tabular-nums; white-space: nowrap; }
 
   .aqi-badge { display: inline-flex; align-items: baseline; gap: 8px; padding: 10px 14px; border-radius: 10px; margin-bottom: 14px; }
   .aqi-badge .num { font-family: 'Fraunces', serif; font-size: 30px; font-weight: 600; }
@@ -130,69 +198,184 @@
   .error-note { font-size: 13px; color: var(--coral); background: var(--coral-bg); border-radius: 8px; padding: 8px 10px; }
   .cache-note { font-size: 12px; color: var(--amber); background: var(--amber-bg); border-radius: 8px; padding: 7px 10px; margin-bottom: 10px; }
 
-  footer { margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--line); }
-  footer .arch-note { font-size: 12.5px; color: var(--ink-soft); line-height: 1.6; margin: 0 0 10px; }
-  footer .timestamps { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  /* --- niveis, alertas e monitoramento --- */
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+  .lvl-0 { background: var(--sage-bg); color: var(--sage); }
+  .lvl-1 { background: var(--amber-bg); color: var(--amber); }
+  .lvl-2 { background: var(--coral-bg); color: var(--coral); }
+  .lvl-3 { background: var(--coral); color: var(--panel); }
+  .lvl-n { background: var(--line); color: var(--ink-soft); }
+  .risk-row { padding: 10px 0; border-top: 1px solid var(--line); }
+  .risk-row:first-of-type { border-top: none; padding-top: 2px; }
+  .risk-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; }
+  .risk-note { font-size: 12px; color: var(--ink-soft); margin: 5px 0 0; line-height: 1.5; }
+  .disclaimer { font-size: 11.5px; color: var(--ink-soft); margin: 10px 0 0; line-height: 1.5; }
+  .alert-item { display: grid; grid-template-columns: 26px 1fr auto; gap: 8px; align-items: start; padding: 9px 0; border-top: 1px solid var(--line); }
+  .alert-item:first-child { border-top: none; padding-top: 2px; }
+  .alert-item .ai-title { font-size: 13px; font-weight: 600; line-height: 1.35; }
+  .alert-item .ai-sub { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+  .mon-row { display: grid; grid-template-columns: 1fr repeat(3, auto); gap: 6px 10px; align-items: center; padding: 8px 0;
+    border-top: 1px solid var(--line); width: 100%; background: none; border-left: 0; border-right: 0; border-bottom: 0;
+    text-align: left; color: var(--ink); cursor: pointer; font-family: 'Inter', sans-serif; }
+  .mon-row:first-of-type { border-top: none; }
+  .mon-row .mn { font-size: 13px; font-weight: 600; }
+  .mon-head { display: grid; grid-template-columns: 1fr repeat(3, auto); gap: 6px 10px; font-size: 10.5px; color: var(--ink-soft);
+    text-transform: uppercase; letter-spacing: 0.03em; padding-bottom: 4px; }
+  .inc-item { padding: 8px 0; border-top: 1px solid var(--line); font-size: 12.5px; }
+  .inc-item:first-of-type { border-top: none; }
+  .inc-item b { font-weight: 600; }
+  .inc-item span { color: var(--ink-soft); }
+  .hot-pin { width: 30px; height: 30px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg);
+    display: flex; align-items: center; justify-content: center; border: 2px solid var(--panel);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.35); }
+  .hot-pin span { transform: rotate(45deg); font-size: 14px; line-height: 1; }
+  .hot-3 { background: var(--coral); }
+  .hot-2 { background: #ee964b; }
+  .hot-1 { background: var(--amber); }
+  #panels { margin-top: 14px; display: flex; flex-direction: column; gap: 14px; }
+
+  footer { margin-top: 12px; padding-top: 16px; border-top: 1px solid var(--line); }
+  footer .arch-note { font-size: 12.5px; color: var(--ink-soft); line-height: 1.6; margin: 0; }
+
+  /* --- botoes/controles do Leaflet seguindo o tema --- */
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--panel); color: var(--ink); }
+  .leaflet-popup-close-button { color: var(--ink-soft) !important; }
+  .leaflet-bar a, .leaflet-bar a:hover { background: var(--panel); color: var(--ink); border-bottom-color: var(--line); }
+  .leaflet-control-attribution { background: var(--panel) !important; color: var(--ink-soft) !important; opacity: 0.85; }
+  .leaflet-control-attribution a { color: var(--accent) !important; }
+  /* controles inferiores ficam acima da fileira de filtros */
+  .map-hero .leaflet-bottom { margin-bottom: calc(100px + env(safe-area-inset-bottom, 0px)); }
+
+  /* --- legenda da camada ativa --- */
+  .map-legend {
+    position: absolute; z-index: 500; left: 14px; right: 60px; max-width: 320px;
+    bottom: calc(104px + env(safe-area-inset-bottom, 0px));
+    background: var(--panel); border-radius: 12px; padding: 9px 12px 6px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.18); display: none;
+    max-height: 38%; overflow-y: auto;
+  }
+  .lg-block + .lg-block { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+  .lg-bands { display: grid; gap: 3px; }
+  .lg-band { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--ink-soft); }
+  .lg-swatch { width: 14px; height: 10px; border-radius: 3px; flex-shrink: 0; border: 1px solid rgba(0,0,0,0.15); }
+  .lg-note { font-size: 10.5px; color: var(--amber); margin-top: 4px; }
+  .lg-hint { font-size: 10.5px; color: var(--ink-soft); margin: 4px 0 2px; }
+  .lg-title { font-size: 12px; font-weight: 700; margin-bottom: 7px; color: var(--ink); }
+  .lg-title span { font-weight: 500; color: var(--ink-soft); }
+  .lg-bar { height: 10px; border-radius: 5px; overflow: hidden; border: 1px solid var(--line); }
+  .lg-fill { height: 100%; }
+  .lg-scale { position: relative; height: 16px; margin-top: 3px; }
+  .lg-label { position: absolute; top: 0; transform: translateX(-50%); font-size: 10.5px; color: var(--ink-soft);
+    font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .lg-label.first { transform: none; }
+  .lg-label.last { transform: translateX(-100%); }
+
+  /* --- pop-up de clique no mapa --- */
+  .point-popup { font-family: 'Inter', sans-serif; min-width: 170px; }
+  .pp-title { font-size: 13px; font-weight: 700; margin-bottom: 6px; color: var(--ink); }
+  .pp-action { width: 100%; margin-top: 10px; padding: 8px 10px; border: none; border-radius: 9px; cursor: pointer;
+    background: var(--accent); color: var(--bg); font-family: 'Inter', sans-serif; font-size: 12.5px; font-weight: 600; }
+  .pp-head { font-size: 11px; font-weight: 700; letter-spacing: 0.03em; color: var(--ink-soft); text-transform: uppercase; }
+  .pp-main { font-family: 'Fraunces', serif; font-size: 26px; font-weight: 500; margin-top: 2px; line-height: 1.15; }
+  .pp-sub { font-size: 12px; color: var(--ink-soft); margin-top: 1px; }
+  .pp-rows { margin: 10px 0 0; padding-top: 8px; border-top: 1px solid var(--line); display: grid; gap: 4px; }
+  .pp-rows div { display: flex; justify-content: space-between; gap: 14px; font-size: 12.5px; }
+  .pp-rows dt { color: var(--ink-soft); }
+  .pp-rows dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+  .pp-coords { margin-top: 8px; font-size: 10.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  .pp-loading { font-size: 13px; color: var(--ink-soft); padding: 4px 0; }
+
+  /* --- aviso rapido (troca de tema) --- */
+  .toast {
+    position: absolute; z-index: 700; left: 50%; top: calc(max(14px, env(safe-area-inset-top, 0px)) + 66px);
+    transform: translateX(-50%); background: var(--ink); color: var(--bg); font-size: 12.5px; font-weight: 600;
+    padding: 8px 14px; border-radius: 999px; opacity: 0; pointer-events: none; transition: opacity 0.2s;
+  }
+  .toast.show { opacity: 1; }
+  @media (max-width: 430px) { .wordmark-sm .wm-text { display: none; } }
 
   .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
   @media (prefers-reduced-motion: reduce) { .dot.pending { animation: none; } }
 </style>
 </head>
 <body>
-<div class="wrap">
 
-  <header>
-    <p class="wordmark"><span class="leaf">🌿</span>Respira Urbana</p>
-    <p class="tagline">Clima e qualidade do ar, servidos por um API Gateway que orquestra três microsserviços.</p>
-    <p class="gateway-note" id="gatewayNote"></p>
+<div class="map-hero">
+  <div id="map"></div>
 
-    <form class="search" id="searchForm">
-      <label for="cityInput" class="visually-hidden">Nome da cidade</label>
-      <input type="text" id="cityInput" placeholder="Buscar uma cidade…" autocomplete="off" inputmode="search">
-      <button type="submit" class="btn-primary">Buscar</button>
-    </form>
-    <button type="button" class="btn-geo" id="geoBtn">Usar minha localização</button>
-
-    <ul class="suggestions" id="suggestions" style="display:none;"></ul>
-
-    <div class="status-strip" id="statusStrip">
-      <div class="status-item"><span class="dot" id="dotGeo"></span>geocodificação</div>
-      <div class="status-item"><span class="dot" id="dotWeather"></span>clima</div>
-      <div class="status-item"><span class="dot" id="dotAir"></span>qualidade do ar</div>
+  <div class="hero-topbar">
+    <div class="hero-row">
+      <span class="wordmark-sm">🌿<span class="wm-text"> Respira</span></span>
+      <form id="searchForm">
+        <label for="cityInput" class="visually-hidden">Nome da cidade</label>
+        <input type="text" id="cityInput" placeholder="Buscar cidade…" autocomplete="off" inputmode="search">
+      </form>
+      <button type="button" class="icon-btn" id="searchBtn" title="Buscar">🔎</button>
+      <button type="button" class="icon-btn ghost" id="geoBtn" title="Usar minha localização">📍</button>
+      <button type="button" class="icon-btn ghost" id="themeBtn" title="Tema" aria-label="Tema">🖥️</button>
     </div>
-  </header>
+    <ul class="hero-suggestions" id="suggestions" style="display:none;"></ul>
+  </div>
+
+  <p class="hero-note" id="heroNote"></p>
+
+  <div class="map-legend" id="mapLegend" aria-live="polite"></div>
+  <div class="toast" id="toast" role="status"></div>
+
+  <div class="hero-filters" id="heroFilters"></div>
+</div>
+
+<div class="wrap">
+  <p class="tagline">Poluição do ar, trânsito e transporte público, alagamentos, inversão térmica, mananciais e desmatamento em um só mapa.</p>
+
+  <div class="status-strip" id="statusStrip">
+    <div class="status-item"><span class="dot" id="dotGeo"></span>Localização</div>
+    <div class="status-item"><span class="dot" id="dotWeather"></span>Clima</div>
+    <div class="status-item"><span class="dot" id="dotAir"></span>Qualidade do ar</div>
+    <div class="status-item"><span class="dot" id="dotRisks"></span>Riscos</div>
+    <div class="status-item"><span class="dot" id="dotTraffic"></span>Trânsito</div>
+    <div class="status-item"><span class="dot" id="dotAlerts"></span>Alertas</div>
+  </div>
 
   <main id="main">
     <div class="empty" id="emptyState">
-      <p>Busque uma cidade ou use sua localização para começar. O gateway consulta os serviços de clima e qualidade do ar em paralelo — se um deles cair, o outro card ainda aparece.</p>
+      <p id="emptyMessage">Localizando você…</p>
     </div>
   </main>
 
-  <footer>
-    <p class="arch-note">Arquitetura: este cliente fala apenas com o API Gateway. O Gateway chama três microsserviços internos (geocodificação, clima, qualidade do ar), guarda respostas no Redis por alguns minutos e usa esse cache quando um serviço está fora do ar. Um quarto serviço, separado, escuta alertas de qualidade do ar publicados via Redis Pub/Sub — de forma totalmente assíncrona.</p>
-    <div class="timestamps" id="timestamps"></div>
-  </footer>
+  <section id="panels" aria-label="Monitoramento">
+    <div class="card" id="alertsCard"><h2>Alertas ambientais</h2><div id="alertsList"><p class="risk-note">Carregando…</p></div></div>
+    <div class="card" id="monitorCard"><h2>Cidades monitoradas</h2><div id="monitorList"><p class="risk-note">Carregando…</p></div></div>
+    <div class="card" id="trafficCard" style="display:none"><h2>Trânsito na área do mapa</h2><div id="trafficList"></div></div>
+  </section>
 
+  <footer>
+    <p class="arch-note">Clima e qualidade do ar: Open-Meteo. Camadas meteorológicas: OpenWeatherMap. Trânsito: TomTom. Transporte público e mananciais: OpenStreetMap (ODbL). Desmatamento: Global Forest Watch (UMD/Hansen). Os indicadores de risco são estimativas de apoio e não substituem os alertas oficiais da Defesa Civil, INMET e CEMADEN.</p>
+  </footer>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 (function () {
-  // Aponta para o API Gateway. Pode ser sobrescrito com ?gateway=http://host:porta
-  // na URL, útil ao testar o gateway rodando em outra máquina/porta a partir da IDE.
   const params = new URLSearchParams(window.location.search);
-  const GATEWAY_URL = params.get('gateway') || 'http://localhost:3000';
+  // ?gateway=… na URL, ou window.RESPIRA_GATEWAY (definido pelo app Android em mobile/), ou o padrao local
+  const GATEWAY_URL = params.get('gateway') || window.RESPIRA_GATEWAY || 'http://localhost:3000';
 
   const $ = (id) => document.getElementById(id);
   const form = $('searchForm');
   const input = $('cityInput');
+  const searchBtn = $('searchBtn');
   const suggestionsEl = $('suggestions');
   const geoBtn = $('geoBtn');
   const main = $('main');
   const emptyState = $('emptyState');
-  const timestampsEl = $('timestamps');
-  const dots = { geo: $('dotGeo'), weather: $('dotWeather'), air: $('dotAir') };
-
-  $('gatewayNote').textContent = 'gateway: ' + GATEWAY_URL;
+  const emptyMessage = $('emptyMessage');
+  const heroNote = $('heroNote');
+  const filtersEl = $('heroFilters');
+  const legendEl = $('mapLegend');
+  const themeBtn = $('themeBtn');
+  const toastEl = $('toast');
+  const dots = { geo: $('dotGeo'), weather: $('dotWeather'), air: $('dotAir'), risks: $('dotRisks'), traffic: $('dotTraffic'), alerts: $('dotAlerts') };
 
   const WMO = {
     0: ['Céu limpo', '☀️'], 1: ['Poucas nuvens', '🌤️'], 2: ['Parcialmente nublado', '⛅'], 3: ['Nublado', '☁️'],
@@ -225,12 +408,8 @@
     if (uv < 8) return { color: 'var(--coral)', bg: 'var(--coral-bg)', lbl: 'Alto', note: 'Procure sombra no meio do dia e use protetor solar.' };
     return { color: 'var(--coral)', bg: 'var(--coral-bg)', lbl: 'Muito alto', note: 'Evite o sol entre 10h e 16h; use protetor e chapéu.' };
   }
-  function fmtTime(ts) {
-    if (!ts) return '—';
-    return new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  }
-
   function statusToDot(s) {
+    if (s === 'disabled') return '';
     if (s === 'live') return 'ok';
     if (s === 'cache') return 'warn';
     return 'err';
@@ -241,12 +420,439 @@
     main.innerHTML = '<div class="card"><p class="error-note">' + msg + '</p></div>';
   }
 
+  // --- Mapa ---
+  let map = null;
+  let centerMarker = null;
+  let selected = null;   // local selecionado (atual, busca ou ponto do mapa)
+  let owmLayer = null;
+  let owmKey = null;
+  let deforestationUrl = null;
+
+  const LAYER_DEFS = [
+    { key: 'none', label: 'Nenhum' },
+    { key: 'temp_new', label: 'Temperatura' },
+    { key: 'precipitation_new', label: 'Chuva' },
+    { key: 'wind_new', label: 'Vento' },
+    { key: 'clouds_new', label: 'Nuvens' },
+    { key: 'pressure_new', label: 'Pressão' }
+  ];
+
+  // Paletas oficiais das camadas (https://openweathermap.org/api/map_legend).
+  // stop = [valor, cor, rotulo opcional]. mode 'value': posicao proporcional ao
+  // valor; 'even': pontos igualmente espacados (faixas muito nao lineares).
+  const LEGENDS = {
+    temp_new: { title: 'Temperatura', unit: '°C', mode: 'value', base: '#e9e6df', stops: [
+      [-40, 'rgb(130,22,146)', '-40'], [-30, 'rgb(130,87,219)'], [-20, 'rgb(32,140,236)', '-20'],
+      [-10, 'rgb(32,196,232)'], [0, 'rgb(35,221,221)', '0'], [10, 'rgb(194,255,40)', '10'],
+      [20, 'rgb(255,240,40)', '20'], [25, 'rgb(255,194,40)'], [30, 'rgb(252,128,20)', '30+'] ] },
+    precipitation_new: { title: 'Chuva', unit: 'mm', mode: 'even', base: '#e9e6df', stops: [
+      [0, 'rgba(225,200,100,0)', '0'], [1, 'rgba(110,110,205,0.3)', '1'],
+      [10, 'rgba(80,80,225,0.7)', '10'], [140, 'rgba(20,20,255,0.9)', '140+'] ] },
+    wind_new: { title: 'Vento', unit: 'm/s', mode: 'even', base: '#e9e6df', stops: [
+      [1, 'rgba(255,255,255,0)', '1'], [5, 'rgba(238,206,206,0.4)', '5'], [15, 'rgba(179,100,188,0.7)', '15'],
+      [25, 'rgba(63,33,59,0.8)', '25'], [50, 'rgba(116,76,172,0.9)', '50'],
+      [100, 'rgba(70,0,175,1)', '100'], [200, 'rgba(13,17,38,1)', '200'] ] },
+    clouds_new: { title: 'Nuvens', unit: '%', mode: 'value', base: '#8b9bab', stops: [
+      [0, 'rgba(255,255,255,0)', '0'], [50, 'rgba(247,247,255,0.5)', '50'],
+      [70, 'rgba(244,244,255,1)'], [100, 'rgba(240,240,255,1)', '100'] ] },
+    pressure_new: { title: 'Pressão', unit: 'hPa', mode: 'value', base: '#e9e6df', stops: [
+      [940, 'rgb(0,115,255)', '940'], [960, 'rgb(0,170,255)'], [980, 'rgb(75,208,214)', '980'],
+      [1000, 'rgb(141,231,199)', '1000'], [1010, 'rgb(176,247,32)'], [1020, 'rgb(240,184,0)', '1020'],
+      [1040, 'rgb(251,85,21)'], [1060, 'rgb(243,54,59)', '1060'], [1080, 'rgb(198,0,0)', '1080'] ] }
+  };
+  let activeLayer = 'temp_new';
+
+  // ----- Temas de monitoramento (alem das camadas meteorologicas) -----
+  const THEMES = [
+    { key: 'air', icon: '🌫️', label: 'Poluição', kind: 'grid', path: '/api/grid/air' },
+    { key: 'traffic', icon: '🚦', label: 'Trânsito', kind: 'tiles', needs: 'traffic' },
+    { key: 'transit', icon: '🚌', label: 'Transporte público', kind: 'area' },
+    { key: 'flood', icon: '🌊', label: 'Alagamento', kind: 'grid', path: '/api/grid/rain' },
+    { key: 'inversion', icon: '🌡️', label: 'Inversão térmica', kind: 'grid', path: '/api/grid/inversion' },
+    { key: 'water', icon: '💧', label: 'Mananciais', kind: 'area' },
+    { key: 'forest', icon: '🌳', label: 'Desmatamento', kind: 'tiles', needs: 'forest' }
+  ];
+  const BANDS = {
+    air: { title: 'Poluição do ar', unit: 'IQA europeu', bands: [
+      ['#50F0E6', 'Boa (0–20)'], ['#50CCAA', 'Razoável (20–40)'], ['#F0E641', 'Moderada (40–60)'],
+      ['#FF5050', 'Ruim (60–80)'], ['#960032', 'Muito ruim (80–100)'], ['#7D2181', 'Extremamente ruim (100+)'] ] },
+    traffic: { title: 'Trânsito em tempo real', unit: '', bands: [
+      ['#2e9e4f', 'Fluindo'], ['#f0a020', 'Lento'], ['#d9381e', 'Congestionado'] ],
+      hint: 'Ícones: acidentes, obras e vias interditadas.' },
+    transit: { title: 'Transporte público', unit: 'OSM', bands: [
+      ['#7b2cbf', 'Metrô'], ['#1d6fa5', 'Trem'], ['#2a9d8f', 'Bonde / VLT'], ['#e07a1f', 'Terminal de ônibus'], ['#b0873a', 'Ponto de ônibus (zoom alto)'] ] },
+    flood: { title: 'Alagamento — chuva prevista, 24 h', unit: 'risco', bands: [
+      ['#8ecae6', 'Chuva fraca (≥ 5 mm)'], ['#f4d35e', 'Atenção (≥ 30 mm ou 20 mm/h)'],
+      ['#ee964b', 'Alto (≥ 50 mm ou 30 mm/h)'], ['#d62828', 'Muito alto (≥ 100 mm ou 60 mm/h)'] ] },
+    inversion: { title: 'Inversão térmica — próximas 24 h', unit: '°C', bands: [
+      ['#f4d35e', 'Fraca (0,5–1,5)'], ['#ee964b', 'Moderada (1,5–3)'], ['#d62828', 'Forte (3+)'] ],
+      hint: 'Diferença T(180 m) − T(2 m).' },
+    water: { title: 'Mananciais e áreas protegidas', unit: 'referência', bands: [
+      ['#2a7fbf', 'Represas e lagos'], ['#3a9a5b', 'Áreas protegidas / reservas'] ],
+      hint: 'Dados do OpenStreetMap; não é o limite legal da área de manancial.' },
+    forest: { title: 'Desmatamento', unit: 'perda de cobertura', bands: [
+      ['#dc6673', 'Perda de cobertura arbórea (GFW)'] ] }
+  };
+  const activeThemes = new Set();
+  const themeNotes = {};
+  const themeGroups = {};
+  const themeTiles = {};
+  const themeReq = {};
+  let trafficEnabled = false;
+  try {
+    const saved = JSON.parse(localStorage.getItem('respira:themes') || '[]');
+    if (Array.isArray(saved)) saved.forEach((k) => { if (THEMES.some((t) => t.key === k)) activeThemes.add(k); });
+  } catch (e) { /* storage indisponivel */ }
+
+  try {
+    if (typeof L === 'undefined') throw new Error('Leaflet não carregou');
+
+    // Visão inicial: o mundo inteiro. Assim que a localização (ou uma busca)
+    // resolver, o mapa dá um flyTo para a região.
+    map = L.map('map', { zoomControl: false, attributionControl: true, scrollWheelZoom: true, worldCopyJump: true })
+      .setView([15, 0], 2);
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    setTimeout(() => map.invalidateSize(), 250);
+    window.addEventListener('resize', () => map.invalidateSize());
+  } catch (err) {
+    console.error('[mapa] falha ao inicializar:', err.message);
+    document.getElementById('map').innerHTML =
+      '<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:13px;color:var(--ink-soft);background:var(--panel);">Mapa indisponível no momento</div>';
+  }
+
+  function themeAvailable(t) {
+    if (t.needs === 'traffic') return trafficEnabled;
+    if (t.needs === 'forest') return Boolean(deforestationUrl);
+    return true;
+  }
+
+  function renderFilters() {
+    const weather = LAYER_DEFS.map((d) => {
+      const disabled = d.key !== 'none' && !owmKey;
+      const active = d.key === activeLayer;
+      return '<button type="button" class="filter-pill' + (active ? ' active' : '') + '" data-layer="' + d.key + '"' +
+        (disabled ? ' disabled title="Configure OPENWEATHER_API_KEY no .env para habilitar"' : '') + '>' + d.label + '</button>';
+    }).join('');
+    const themes = THEMES.map((t) => {
+      const ok = themeAvailable(t);
+      const active = activeThemes.has(t.key);
+      return '<button type="button" class="filter-pill theme' + (active ? ' active' : '') + '" data-theme="' + t.key + '"' +
+        ' aria-pressed="' + active + '"' +
+        (ok ? '' : ' disabled title="' + (t.needs === 'traffic' ? 'Configure TOMTOM_API_KEY no .env para habilitar' : 'Indisponível') + '"') +
+        '>' + t.icon + ' ' + t.label + '</button>';
+    }).join('');
+    filtersEl.innerHTML = '<div class="filter-row" aria-label="Camadas meteorológicas">' + weather + '</div>' +
+      '<div class="filter-row" aria-label="Temas de monitoramento">' + themes + '</div>';
+  }
+
+  function applyLayer(key) {
+    activeLayer = key;
+    if (owmLayer) { map.removeLayer(owmLayer); owmLayer = null; }
+    if (key !== 'none' && owmKey && map) {
+      owmLayer = L.tileLayer(
+        'https://tile.openweathermap.org/map/' + key + '/{z}/{x}/{y}.png?appid=' + owmKey,
+        { maxZoom: 18, opacity: 0.7, attribution: 'Weather &copy; OpenWeatherMap' }
+      ).addTo(map);
+    }
+    renderFilters();
+    renderLegends();
+    if (lastPoint && clickPopup && clickPopup.isOpen()) {
+      clickPopup.setContent(renderPointPopup(lastPoint.data.weather || {}, lastPoint.wrapped, activeLayer, { action: true, extra: lastPoint.data }));
+    }
+    if (centerMarker) centerMarker.setPopupContent(selectedPopupHtml());
+  }
+
+  function weatherLegendHtml(key) {
+    const def = LEGENDS[key];
+    if (!def || !owmKey) return '';
+    const n = def.stops.length;
+    const min = def.stops[0][0];
+    const max = def.stops[n - 1][0];
+    const pos = def.stops.map((s, i) => def.mode === 'even' ? (i / (n - 1)) * 100 : ((s[0] - min) / (max - min)) * 100);
+    const gradient = 'linear-gradient(90deg,' + def.stops.map((s, i) => s[1] + ' ' + pos[i].toFixed(1) + '%').join(',') + ')';
+    const labels = def.stops.map((s, i) => s[2]
+      ? '<span class="lg-label' + (i === 0 ? ' first' : i === n - 1 ? ' last' : '') + '" style="left:' + pos[i].toFixed(1) + '%">' + s[2] + '</span>'
+      : '').join('');
+    return '<div class="lg-block"><div class="lg-title">' + def.title + ' <span>(' + def.unit + ')</span></div>' +
+      '<div class="lg-bar" style="background-color:' + def.base + '"><div class="lg-fill" style="background:' + gradient + '"></div></div>' +
+      '<div class="lg-scale">' + labels + '</div></div>';
+  }
+
+  function bandLegendHtml(key) {
+    const def = BANDS[key];
+    if (!def) return '';
+    return '<div class="lg-block"><div class="lg-title">' + def.title + (def.unit ? ' <span>(' + def.unit + ')</span>' : '') + '</div>' +
+      '<div class="lg-bands">' + def.bands.map((b) =>
+        '<div class="lg-band"><span class="lg-swatch" style="background:' + b[0] + '"></span>' + b[1] + '</div>').join('') + '</div>' +
+      (def.hint ? '<div class="lg-hint">' + def.hint + '</div>' : '') +
+      (HOT_ICON[key] ? '<div class="lg-hint">Pinos: focos críticos e alertas ativos. Toque para detalhes.</div>' : '') +
+      (themeNotes[key] ? '<div class="lg-note">' + esc(themeNotes[key]) + '</div>' : '') + '</div>';
+  }
+
+  function renderLegends() {
+    let html = weatherLegendHtml(activeLayer);
+    for (const t of THEMES) if (activeThemes.has(t.key)) html += bandLegendHtml(t.key);
+    legendEl.innerHTML = html;
+    legendEl.style.display = html ? 'block' : 'none';
+  }
+
+  // --- Pop-up ao clicar no mapa: mostra o dado da camada ativa naquele ponto ---
+  let clickPopup = null;
+  let lastPoint = null;
+  let pointReq = 0;
+
+  function cardinal(deg) { return ['N', 'NE', 'L', 'SE', 'S', 'SO', 'O', 'NO'][Math.round(deg / 45) % 8]; }
+
+  function esc(t) {
+    return String(t).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  }
+
+  // Numero com unidade; "—" quando o dado nao veio (ex.: servico em versao antiga).
+  function num(v, digits, suffix) {
+    if (v == null || Number.isNaN(Number(v))) return '—';
+    return Number(v).toFixed(digits) + (suffix || '');
+  }
+
+  // O que mostrar para cada camada do mapa, dado o clima de um ponto.
+  function layerInfo(data, layer) {
+    const c = data.current || {};
+    const [cond, emoji] = WMO[c.weather_code] || ['—', '🌡️'];
+    const prob = data.precipitationProbability;
+    const probTxt = prob == null ? '—' : prob + '%';
+    const hum = num(c.relative_humidity_2m, 0, '%');
+    const wind = num(c.wind_speed_10m, 0, ' km/h');
+    const t = num(c.temperature_2m, 0, '°C');
+    const dir = c.wind_direction_10m == null ? '—' : cardinal(c.wind_direction_10m) + ' (' + Math.round(c.wind_direction_10m) + '°)';
+
+    switch (layer) {
+      case 'temp_new':
+        return { head: 'Temperatura', main: emoji + ' ' + t, sub: '',
+          rows: [['Sensação', num(c.apparent_temperature, 0, '°C')], ['Umidade', hum], ['Condição', cond]] };
+      case 'precipitation_new':
+        return { head: 'Chuva', main: '☔ ' + probTxt, sub: 'chance de chuva',
+          rows: [['Precipitação', num(c.precipitation, 1, ' mm')], ['Umidade', hum], ['Condição', cond]] };
+      case 'wind_new':
+        return { head: 'Vento', main: '💨 ' + wind, sub: '',
+          rows: [['Direção', dir], ['Rajadas', num(c.wind_gusts_10m, 0, ' km/h')],
+                 ['Em m/s', c.wind_speed_10m == null ? '—' : (c.wind_speed_10m / 3.6).toFixed(1) + ' m/s']] };
+      case 'clouds_new':
+        return { head: 'Nuvens', main: '☁️ ' + num(c.cloud_cover, 0, '%'), sub: 'cobertura de nuvens',
+          rows: [['Umidade', hum], ['Condição', cond], ['Temperatura', t]] };
+      case 'pressure_new':
+        return { head: 'Pressão', main: '🧭 ' + num(c.pressure_msl, 0, ' hPa'), sub: 'ao nível do mar',
+          rows: [['Condição', cond], ['Temperatura', t], ['Vento', wind]] };
+      default:
+        return { head: 'Condições aqui', main: emoji + ' ' + t, sub: cond,
+          rows: [['Umidade', hum], ['Vento', wind], ['Chance de chuva', probTxt]] };
+    }
+  }
+
+  const FLOOD_LBL = { baixo: 'Baixo', atencao: 'Atenção', alto: 'Alto', muito_alto: 'Muito alto' };
+  const EAQI_LBL = ['Boa', 'Razoável', 'Moderada', 'Ruim', 'Muito ruim', 'Extremamente ruim'];
+  const cap = (t) => (t ? t.charAt(0).toUpperCase() + t.slice(1) : '—');
+  function eaqiLabel(a) { return EAQI_LBL[Math.min(5, Math.floor(a / 20))]; }
+
+  // Linhas dos temas ativos (poluicao, alagamento, inversao, transito) para os pop-ups.
+  function themeRows(x, which) {
+    const rows = [];
+    if (!x) return rows;
+    if (which.has('air') && x.air && x.air.current && x.air.current.european_aqi != null) {
+      const a = Math.round(x.air.current.european_aqi);
+      rows.push(['Qualidade do ar', 'IQA ' + a + ' · ' + eaqiLabel(a)]);
+    }
+    if (which.has('flood') && x.flood) {
+      const mm = x.flood.rain && x.flood.rain.next24hMm != null ? ' · ' + x.flood.rain.next24hMm + ' mm/24 h' : '';
+      rows.push(['Alagamento', (FLOOD_LBL[x.flood.level] || '—') + mm]);
+    }
+    if (which.has('inversion') && x.inversion && x.inversion.available) {
+      rows.push(['Inversão térmica', cap(x.inversion.next24h.level) + ' · ' + x.inversion.next24h.maxStrength + ' °C']);
+    }
+    if (which.has('traffic') && x.traffic && x.traffic.available) {
+      rows.push(['Trânsito', cap(x.traffic.level) + ' · ' + Math.round(x.traffic.currentSpeedKmh) + ' km/h']);
+    }
+    return rows;
+  }
+
+  // opts: { title } nome do local; { extra } dados dos temas (ar, alagamento, inversao, transito);
+  //       { action } botao "Ver resumo completo" (pop-up de clique no mapa)
+  function renderPointPopup(data, ll, layer, opts) {
+    opts = opts || {};
+    const info = layerInfo(data, layer);
+    const which = new Set(activeThemes);
+    if (layer === 'none') which.add('air');
+    const rows = info.rows.concat(themeRows(opts.extra, which));
+    return '<div class="point-popup">' +
+      (opts.title ? '<div class="pp-title">' + esc(opts.title) + '</div>' : '') +
+      '<div class="pp-head">' + info.head + '</div><div class="pp-main">' + info.main + '</div>' +
+      (info.sub ? '<div class="pp-sub">' + info.sub + '</div>' : '') +
+      '<dl class="pp-rows">' + rows.map((r) => '<div><dt>' + r[0] + '</dt><dd>' + r[1] + '</dd></div>').join('') + '</dl>' +
+      '<div class="pp-coords">' + ll.lat.toFixed(2) + '°, ' + ll.lng.toFixed(2) + '°</div>' +
+      (opts.action ? '<button type="button" class="pp-action" onclick="respiraSummary()">Ver resumo completo deste local</button>' : '') +
+      '</div>';
+  }
+
+  // Pop-up do marcador do local selecionado: segue a camada ativa.
+  function selectedPopupHtml() {
+    if (!selected) return '';
+    if (!selected.weather) {
+      return '<div class="point-popup"><div class="pp-title">' + esc(selected.label) + '</div><div class="pp-loading">Clima indisponível no momento.</div></div>';
+    }
+    return renderPointPopup(selected.weather, { lat: selected.lat, lng: selected.lon }, activeLayer,
+      { title: selected.label, extra: selected.extra });
+  }
+
+  const THEME_INCLUDE = { air: 'air', flood: 'flood', inversion: 'inversion', traffic: 'traffic' };
+
+  async function queryPoint(latlng) {
+    const id = ++pointReq;
+    const wrapped = latlng.wrap();
+    lastPoint = null;
+    lastClick = latlng;
+    clickPopup.setLatLng(latlng).setContent('<div class="point-popup"><div class="pp-loading">Carregando…</div></div>').openOn(map);
+    let msg = 'Não foi possível carregar os dados deste ponto.';
+    const include = ['weather'].concat([...activeThemes].map((k) => THEME_INCLUDE[k]).filter(Boolean));
+    try {
+      const res = await fetch(GATEWAY_URL + '/api/point?lat=' + wrapped.lat.toFixed(4) + '&lon=' + wrapped.lng.toFixed(4) +
+        '&include=' + include.join(','));
+      if (res.status === 404) {
+        // gateway em execucao ainda e uma versao antiga, sem a rota /api/point
+        msg = 'Servidor desatualizado. Reinicie os serviços: docker-compose up -d --build';
+        throw new Error('rota ausente');
+      }
+      const data = await res.json();
+      if (id !== pointReq) return;
+      if (!res.ok) throw new Error(data.error || 'erro');
+      lastPoint = { wrapped, data };
+      clickPopup.setContent(renderPointPopup(data.weather || {}, wrapped, activeLayer, { action: true, extra: data }));
+    } catch (err) {
+      if (id !== pointReq) return;
+      clickPopup.setContent('<div class="point-popup"><div class="pp-loading">' + msg + '</div></div>');
+    }
+  }
+  let lastClick = null;
+
+  if (map) {
+    clickPopup = L.popup({ maxWidth: 260, autoPanPadding: [20, 80] });
+    map.on('click', (e) => queryPoint(e.latlng));
+  }
+
+  // Botao do pop-up de clique: torna aquele ponto o local selecionado
+  // (atualiza o resumo abaixo do mapa e o marcador).
+  window.respiraSummary = function () {
+    if (!lastPoint) return;
+    const { lat, lng } = lastPoint.wrapped;
+    map.closePopup();
+    loadPlace(lat, lng, 'Ponto no mapa (' + lat.toFixed(2) + '°, ' + lng.toFixed(2) + '°)');
+  };
+
+  // --- Tema: sistema / claro / escuro ---
+  const THEME_META = {
+    system: { icon: '🖥️', label: 'Tema: automático (sistema)' },
+    light: { icon: '☀️', label: 'Tema: claro' },
+    dark: { icon: '🌙', label: 'Tema: escuro' }
+  };
+  let currentTheme = 'system';
+  try {
+    const saved = localStorage.getItem('respira:theme');
+    if (saved === 'light' || saved === 'dark') currentTheme = saved;
+  } catch (e) { /* storage indisponivel: segue no automatico */ }
+
+  let toastTimer = null;
+  function showToast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1600);
+  }
+
+  function applyTheme(mode, announce) {
+    currentTheme = mode;
+    const root = document.documentElement;
+    if (mode === 'system') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', mode);
+    try {
+      if (mode === 'system') localStorage.removeItem('respira:theme'); else localStorage.setItem('respira:theme', mode);
+    } catch (e) { /* ignora */ }
+    themeBtn.textContent = THEME_META[mode].icon;
+    themeBtn.title = THEME_META[mode].label;
+    themeBtn.setAttribute('aria-label', THEME_META[mode].label);
+    if (announce) showToast(THEME_META[mode].label);
+  }
+
+  themeBtn.addEventListener('click', () => {
+    const order = ['system', 'light', 'dark'];
+    applyTheme(order[(order.indexOf(currentTheme) + 1) % order.length], true);
+  });
+  applyTheme(currentTheme, false);
+
+  filtersEl.addEventListener('click', (e) => {
+    const th = e.target.closest('button[data-theme]');
+    if (th && !th.disabled) { toggleTheme(th.dataset.theme); return; }
+    const btn = e.target.closest('button[data-layer]');
+    if (!btn || btn.disabled) return;
+    applyLayer(btn.dataset.layer);
+  });
+
+  async function loadConfig() {
+    try {
+      const res = await fetch(GATEWAY_URL + '/api/config');
+      const data = await res.json();
+      owmKey = data.openWeatherApiKey || null;
+      trafficEnabled = Boolean(data.trafficEnabled);
+      deforestationUrl = data.deforestationTilesUrl || null;
+    } catch (e) {
+      owmKey = null;
+      trafficEnabled = false;
+      deforestationUrl = null;
+    }
+    if (!owmKey) {
+      heroNote.textContent = 'Mapas de calor desativados — configure OPENWEATHER_API_KEY no .env.';
+    }
+    renderFilters();
+    if (map) applyLayer(activeLayer);
+    if (map) { for (const k of [...activeThemes]) { const t = THEMES.find((x) => x.key === k); if (!themeAvailable(t)) activeThemes.delete(k); } syncThemes(); }
+  }
+
+  function weatherPinHtml(emoji, bg) {
+    return '<div class="weather-pin" style="background:' + bg + '"><span>' + emoji + '</span></div>';
+  }
+
+  function updateCenterMarker(lat, lon, label, weather, air, extra) {
+    if (!map) return;
+    selected = { lat, lon, label, weather, air, extra: extra || { air } };
+    const emoji = weather ? (WMO[weather.current.weather_code] || [null, '🌡️'])[1] : '📍';
+    const aqi = air ? Math.round(air.current.european_aqi) : null;
+    const bg = aqi == null ? 'var(--panel)' : aqi <= 40 ? 'var(--sage-bg)' : aqi <= 80 ? 'var(--amber-bg)' : 'var(--coral-bg)';
+
+    const icon = L.divIcon({
+      className: '', html: weatherPinHtml(emoji, bg),
+      iconSize: [38, 38], iconAnchor: [19, 38], popupAnchor: [0, -36]
+    });
+
+    const html = selectedPopupHtml();
+    if (centerMarker) {
+      centerMarker.setLatLng([lat, lon]).setIcon(icon).setPopupContent(html);
+    } else {
+      centerMarker = L.marker([lat, lon], { icon, zIndexOffset: 1000 }).addTo(map).bindPopup(html, { maxWidth: 260 });
+    }
+    centerMarker.openPopup();
+    map.flyTo([lat, lon], Math.max(map.getZoom(), 7), { duration: 1 });
+  }
+
+  // --- Carregamento de dados ---
   async function loadPlace(lat, lon, label) {
     emptyState.style.display = 'none';
     suggestionsEl.style.display = 'none';
-    main.innerHTML = '<div class="empty"><p>Consultando o API Gateway…</p></div>';
+    main.innerHTML = '<div class="empty"><p>Carregando…</p></div>';
     setDot('weather', 'pending');
     setDot('air', 'pending');
+    setDot('risks', 'pending');
+    setDot('traffic', 'pending');
 
     try {
       const url = GATEWAY_URL + '/api/environment?lat=' + lat + '&lon=' + lon + '&place=' + encodeURIComponent(label);
@@ -254,46 +860,60 @@
       const body = await res.json();
 
       if (!res.ok) {
-        renderError(body.error || 'O gateway não conseguiu responder agora.');
+        renderError(body.error || 'Não foi possível carregar os dados agora.');
         return;
       }
 
       setDot('weather', statusToDot(body.status.weather));
       setDot('air', statusToDot(body.status.airQuality));
-      timestampsEl.innerHTML =
-        '<span>resposta do gateway: ' + fmtTime(body.servedAt) + '</span>' +
-        '<span>clima: ' + body.status.weather + '</span>' +
-        '<span>qualidade do ar: ' + body.status.airQuality + '</span>';
+      setDot('risks', statusToDot(body.status.risks));
+      setDot('traffic', statusToDot(body.status.traffic));
 
-      renderPlace(label, body.weather, body.airQuality, body.status);
+      renderPlace(label, body.weather, body.airQuality, body.status, body.risks, body.traffic);
+      updateCenterMarker(lat, lon, label, body.weather, body.airQuality,
+        { air: body.airQuality, flood: body.risks && body.risks.flood, inversion: body.risks && body.risks.inversion, traffic: body.traffic });
     } catch (err) {
       setDot('weather', 'err');
       setDot('air', 'err');
-      renderError('Não foi possível falar com o API Gateway em ' + GATEWAY_URL + '. Ele está rodando? (docker-compose up)');
+      setDot('risks', 'err');
+      setDot('traffic', 'err');
+      renderError('Não foi possível carregar os dados agora. Verifique se o servidor está rodando.');
     }
   }
 
-  function renderPlace(label, weather, air, status) {
+  function renderPlace(label, weather, air, status, risks, traffic) {
     let html = '';
 
     if (weather) {
-      const c = weather.current;
+      const c = weather.current || {};
       const [condName, emoji] = WMO[c.weather_code] || ['Condição desconhecida', '🌡️'];
       html += '<div class="card">' +
-        '<p class="place-name">' + label + '</p>' +
-        (status.weather === 'cache' ? '<div class="cache-note">Dados de clima servidos do cache do gateway (serviço original indisponível).</div>' : '<p class="place-sub">atualizado agora</p>') +
+        '<p class="place-name">' + esc(label) + '</p>' +
+        (status.weather === 'cache' ? '<div class="cache-note">Mostrando o último dado disponível (sem conexão em tempo real agora).</div>' : '<p class="place-sub">atualizado agora</p>') +
         '<div class="temp-row">' +
-          '<div class="temp-big">' + Math.round(c.temperature_2m) + '°</div>' +
-          '<div class="temp-meta"><div class="cond">' + emoji + ' ' + condName + '</div><div class="feel">Sensação de ' + Math.round(c.apparent_temperature) + '°C</div></div>' +
-        '</div>' +
-        '<div class="metrics-row">' +
-          '<div class="metric"><div class="k">Umidade</div><div class="v">' + c.relative_humidity_2m + '%</div></div>' +
-          '<div class="metric"><div class="k">Vento</div><div class="v">' + Math.round(c.wind_speed_10m) + ' km/h</div></div>' +
-          '<div class="metric"><div class="k">Precipitação</div><div class="v">' + c.precipitation + ' mm</div></div>' +
+          '<div class="temp-big">' + num(c.temperature_2m, 0, '°') + '</div>' +
+          '<div class="temp-meta"><div class="cond">' + emoji + ' ' + condName + '</div><div class="feel">Sensação de ' + num(c.apparent_temperature, 0, '°C') + '</div></div>' +
         '</div>' +
       '</div>';
+
+      // Todas as camadas do mapa, para o local selecionado
+      const prob = weather.precipitationProbability;
+      const dirTxt = c.wind_direction_10m == null ? '' : cardinal(c.wind_direction_10m) + ' · ';
+      const rows = [
+        ['🌡️', 'Temperatura', num(c.temperature_2m, 0, '°C'), 'sensação ' + num(c.apparent_temperature, 0, '°C')],
+        ['☔', 'Chuva', prob == null ? '—' : prob + '%', 'precipitação ' + num(c.precipitation, 1, ' mm')],
+        ['💨', 'Vento', num(c.wind_speed_10m, 0, ' km/h'), dirTxt + 'rajadas ' + num(c.wind_gusts_10m, 0, ' km/h')],
+        ['☁️', 'Nuvens', num(c.cloud_cover, 0, '%'), 'cobertura do céu'],
+        ['🧭', 'Pressão', num(c.pressure_msl, 0, ' hPa'), 'ao nível do mar'],
+        ['💧', 'Umidade', num(c.relative_humidity_2m, 0, '%'), 'umidade relativa do ar']
+      ];
+      html += '<div class="card"><h2>Condições por camada</h2><div class="layer-list">' +
+        rows.map((r) => '<div class="layer-row"><div class="lr-icon">' + r[0] + '</div>' +
+          '<div><div class="lr-label">' + r[1] + '</div><div class="lr-sub">' + r[3] + '</div></div>' +
+          '<div class="lr-value">' + r[2] + '</div></div>').join('') +
+        '</div></div>';
     } else {
-      html += '<div class="card"><p class="place-name">' + label + '</p><p class="error-note">Clima indisponível: serviço fora do ar e sem cache para este local.</p></div>';
+      html += '<div class="card"><p class="place-name">' + esc(label) + '</p><p class="error-note">Clima indisponível no momento.</p></div>';
     }
 
     if (air) {
@@ -302,7 +922,7 @@
       const a = aqiClass(aqi);
       html += '<div class="card">' +
         '<h2>Qualidade do ar</h2>' +
-        (status.airQuality === 'cache' ? '<div class="cache-note">Dados servidos do cache do gateway.</div>' : '') +
+        (status.airQuality === 'cache' ? '<div class="cache-note">Mostrando o último dado disponível.</div>' : '') +
         '<div class="aqi-badge ' + a.cls + '"><span class="num">' + aqi + '</span><span class="lbl">' + a.lbl + ' · IQA europeu</span></div>' +
         '<div class="poll-grid">' +
           pollutant('PM2.5', c.pm2_5, 'µg/m³', [15, 35]) +
@@ -318,10 +938,57 @@
         '<div class="uv-text"><div class="uv-lbl" style="color:' + uv.color + '">' + uv.lbl + '</div><div class="uv-note">' + uv.note + '</div></div>' +
       '</div></div>';
     } else {
-      html += '<div class="card"><h2>Qualidade do ar</h2><p class="error-note">Indisponível: serviço fora do ar e sem cache para este local.</p></div>';
+      html += '<div class="card"><h2>Qualidade do ar</h2><p class="error-note">Indisponível no momento.</p></div>';
     }
 
+    html += riskCardHtml(risks, traffic, status);
     main.innerHTML = html;
+  }
+
+  function lvlClass(score) { return score == null ? 'lvl-n' : 'lvl-' + score; }
+
+  function riskCardHtml(risks, traffic, status) {
+    const f = risks && risks.flood;
+    const inv = risks && risks.inversion;
+    let rows = '';
+
+    if (f) {
+      const r = f.rain || {};
+      const river = f.river && f.river.available && f.river.ratio != null
+        ? ' Vazão do rio prevista em ' + String(f.river.ratio).replace('.', ',') + '× a mediana recente.' : '';
+      rows += '<div class="risk-row"><div class="risk-head"><span>🌊 Alagamento e inundação</span>' +
+        '<span class="badge ' + lvlClass(f.score) + '">' + (FLOOD_LBL[f.level] || '—') + '</span></div>' +
+        '<p class="risk-note">' + (f.reasons || []).map(esc).join('. ') + '.' + river + ' Chuva prevista: ' +
+        num(r.next24hMm, 1, ' mm') + ' em 24 h (máx. ' + num(r.maxHourlyMm, 1, ' mm/h') + ').</p></div>';
+    } else {
+      rows += '<div class="risk-row"><div class="risk-head"><span>🌊 Alagamento e inundação</span><span class="badge lvl-n">indisponível</span></div></div>';
+    }
+
+    if (inv && inv.available) {
+      const n = inv.next24h;
+      const peak = n.peakTime ? ' Pico às ' + esc(String(n.peakTime).slice(11, 16)) + '.' : '';
+      rows += '<div class="risk-row"><div class="risk-head"><span>🌡️ Inversão térmica (24 h)</span>' +
+        '<span class="badge ' + lvlClass(n.score) + '">' + cap(n.level) + '</span></div>' +
+        '<p class="risk-note">Intensidade máxima de ' + n.maxStrength + ' °C (temperatura aumentando com a altura perto do solo).' + peak +
+        (n.trapsPollutants ? ' Com vento fraco, a inversão tende a reter poluentes perto do solo.' : '') + '</p></div>';
+    } else {
+      rows += '<div class="risk-row"><div class="risk-head"><span>🌡️ Inversão térmica (24 h)</span><span class="badge lvl-n">indisponível</span></div></div>';
+    }
+
+    if (status && status.traffic === 'disabled') {
+      rows += '<div class="risk-row"><div class="risk-head"><span>🚦 Trânsito</span><span class="badge lvl-n">desativado</span></div>' +
+        '<p class="risk-note">Configure TOMTOM_API_KEY no .env para ativar.</p></div>';
+    } else if (traffic && traffic.available) {
+      rows += '<div class="risk-row"><div class="risk-head"><span>🚦 Trânsito na via mais próxima</span>' +
+        '<span class="badge ' + lvlClass(traffic.score) + '">' + cap(traffic.level) + '</span></div>' +
+        '<p class="risk-note">' + Math.round(traffic.currentSpeedKmh) + ' km/h agora (velocidade livre: ' + Math.round(traffic.freeFlowSpeedKmh) + ' km/h)' +
+        (traffic.roadClosure ? '. Via interditada' : '') + '.</p></div>';
+    } else {
+      rows += '<div class="risk-row"><div class="risk-head"><span>🚦 Trânsito</span><span class="badge lvl-n">sem dados aqui</span></div>' +
+        '<p class="risk-note">Não há via monitorada perto deste ponto.</p></div>';
+    }
+    return '<div class="card"><h2>Riscos e trânsito neste local</h2>' + rows +
+      '<p class="disclaimer">Estimativas de apoio baseadas em modelos de previsão. Não substituem os alertas oficiais da Defesa Civil, INMET e CEMADEN.</p></div>';
   }
 
   function pollutant(name, value, unit, thresholds) {
@@ -359,8 +1026,26 @@
       suggestionsEl.style.display = 'block';
     } catch (e) {
       setDot('geo', 'err');
-      renderError('Não foi possível falar com o API Gateway em ' + GATEWAY_URL + '. Ele está rodando? (docker-compose up)');
+      renderError('Não foi possível falar com o servidor. Ele está rodando? (docker-compose up)');
     }
+  }
+
+  function tryGeolocation(auto) {
+    if (!navigator.geolocation) {
+      if (!auto) renderError('Geolocalização não é suportada neste navegador.');
+      else emptyMessage.textContent = 'Não foi possível localizar você automaticamente. Busque uma cidade acima.';
+      return;
+    }
+    setDot('geo', 'pending');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { setDot('geo', 'ok'); loadPlace(pos.coords.latitude, pos.coords.longitude, 'Sua localização'); },
+      () => {
+        setDot('geo', null);
+        if (auto) emptyMessage.textContent = 'Não conseguimos acessar sua localização. Busque uma cidade acima.';
+        else renderError('Não foi possível acessar sua localização. Permita o acesso ou busque uma cidade pelo nome.');
+      },
+      { timeout: 8000 }
+    );
   }
 
   suggestionsEl.addEventListener('click', (e) => {
@@ -374,16 +1059,392 @@
     const q = input.value.trim();
     if (q) searchCity(q);
   });
-
-  geoBtn.addEventListener('click', () => {
-    if (!navigator.geolocation) { renderError('Geolocalização não é suportada neste navegador.'); return; }
-    setDot('geo', 'pending');
-    navigator.geolocation.getCurrentPosition(
-      (pos) => { setDot('geo', 'ok'); loadPlace(pos.coords.latitude, pos.coords.longitude, 'Sua localização'); },
-      () => { setDot('geo', 'err'); renderError('Não foi possível acessar sua localização. Permita o acesso ou busque uma cidade pelo nome.'); },
-      { timeout: 8000 }
-    );
+  searchBtn.addEventListener('click', () => {
+    const q = input.value.trim();
+    if (q) searchCity(q);
   });
+
+  geoBtn.addEventListener('click', () => tryGeolocation(false));
+
+  // ===== Temas de monitoramento: camadas no mapa =====
+  const AQI_COLORS = ['#50F0E6', '#50CCAA', '#F0E641', '#FF5050', '#960032', '#7D2181'];
+  const LEVEL_COLORS = ['#f4d35e', '#ee964b', '#d62828'];
+
+  function cellColor(theme, c) {
+    if (theme === 'air') return c.aqi == null ? null : AQI_COLORS[Math.min(5, Math.floor(c.aqi / 20))];
+    if (theme === 'flood') {
+      if (c.mm24 == null) return null;
+      const a = c.mm24; const h = c.maxHourly || 0;
+      const lvl = (a >= 100 || h >= 60) ? 3 : (a >= 50 || h >= 30) ? 2 : (a >= 30 || h >= 20) ? 1 : 0;
+      if (lvl === 0) return a >= 5 ? '#8ecae6' : null;
+      return LEVEL_COLORS[lvl - 1];
+    }
+    if (theme === 'inversion') {
+      const v = c.maxStrength;
+      if (v == null || v < 0.5) return null;
+      return v >= 3 ? LEVEL_COLORS[2] : v >= 1.5 ? LEVEL_COLORS[1] : LEVEL_COLORS[0];
+    }
+    return null;
+  }
+
+  function view() {
+    const b = map.getBounds();
+    return { south: Math.max(-90, b.getSouth()), north: Math.min(90, b.getNorth()),
+      west: Math.max(-180, b.getWest()), east: Math.min(180, b.getEast()) };
+  }
+  const qs = (v) => 'south=' + v.south.toFixed(4) + '&west=' + v.west.toFixed(4) + '&north=' + v.north.toFixed(4) + '&east=' + v.east.toFixed(4);
+  const span = (v) => Math.max(v.north - v.south, v.east - v.west);
+
+  function setNote(key, text) {
+    if ((themeNotes[key] || '') === (text || '')) return;
+    if (text) themeNotes[key] = text; else delete themeNotes[key];
+    renderLegends();
+  }
+  function groupFor(key) {
+    if (!themeGroups[key]) themeGroups[key] = L.layerGroup();
+    return themeGroups[key];
+  }
+
+  async function loadGrid(t) {
+    const id = (themeReq[t.key] = (themeReq[t.key] || 0) + 1);
+    const g = groupFor(t.key);
+    try {
+      const res = await fetch(GATEWAY_URL + t.path + '?' + qs(view()));
+      const data = await res.json();
+      if (id !== themeReq[t.key] || !activeThemes.has(t.key)) return;
+      if (!res.ok) throw new Error(data.error || 'erro');
+      g.clearLayers();
+      const half = data.step / 2;
+      for (const c of data.cells) {
+        const col = cellColor(t.key, c);
+        if (!col) continue;
+        L.rectangle([[c.lat - half, c.lon - half], [c.lat + half, c.lon + half]],
+          { stroke: false, fillColor: col, fillOpacity: 0.45, interactive: false }).addTo(g);
+      }
+      drawGridPins(t.key, data);
+      setNote(t.key, '');
+    } catch (err) {
+      if (id !== themeReq[t.key]) return;
+      g.clearLayers();
+      hotFor(t.key).clearLayers();
+      setNote(t.key, 'Não foi possível carregar esta camada agora.');
+    }
+  }
+
+  const TRANSIT_COLORS = { metro: '#7b2cbf', train: '#1d6fa5', tram: '#2a9d8f', bus_station: '#e07a1f', bus: '#b0873a' };
+  const TRANSIT_NAMES = { metro: 'Metrô', train: 'Trem', tram: 'Bonde / VLT', bus_station: 'Terminal de ônibus', bus: 'Ponto de ônibus' };
+
+  async function loadTransit() {
+    const v = view();
+    const g = groupFor('transit');
+    const sp = span(v);
+    const scope = (map.getZoom() >= 14 && sp <= 0.2) ? 'all' : 'stations';
+    if (sp > 2) { g.clearLayers(); setNote('transit', 'Aproxime o mapa para ver estações e pontos.'); return; }
+    const id = (themeReq.transit = (themeReq.transit || 0) + 1);
+    try {
+      const res = await fetch(GATEWAY_URL + '/api/transit?' + qs(v) + '&scope=' + scope);
+      const data = await res.json();
+      if (id !== themeReq.transit || !activeThemes.has('transit')) return;
+      if (!res.ok) throw new Error(data.error || 'erro');
+      g.clearLayers();
+      for (const st of data.stops) {
+        const color = TRANSIT_COLORS[st.kind] || '#555';
+        const r = st.kind === 'bus' ? 4 : 7;
+        L.circleMarker([st.lat, st.lon], { radius: r, color: '#fff', weight: 1.5, fillColor: color, fillOpacity: 0.95 })
+          .bindPopup('<div class="point-popup"><div class="pp-title">' + esc(st.name || TRANSIT_NAMES[st.kind]) + '</div>' +
+            '<div class="pp-sub">' + TRANSIT_NAMES[st.kind] + (st.operator ? ' · ' + esc(st.operator) : '') + '</div></div>').addTo(g);
+      }
+      setNote('transit', data.truncated ? 'Mostrando só parte dos pontos; aproxime o mapa.' :
+        (scope === 'stations' ? 'Pontos de ônibus aparecem em zoom alto.' : ''));
+    } catch (err) {
+      if (id !== themeReq.transit) return;
+      g.clearLayers();
+      setNote('transit', 'Não foi possível carregar o transporte público agora.');
+    }
+  }
+
+  async function loadWater() {
+    const v = view();
+    const g = groupFor('water');
+    if (span(v) > 1.5) { g.clearLayers(); setNote('water', 'Aproxime o mapa para ver mananciais e áreas protegidas.'); return; }
+    const id = (themeReq.water = (themeReq.water || 0) + 1);
+    try {
+      const res = await fetch(GATEWAY_URL + '/api/watersheds?' + qs(v));
+      const data = await res.json();
+      if (id !== themeReq.water || !activeThemes.has('water')) return;
+      if (!res.ok) throw new Error(data.error || 'erro');
+      g.clearLayers();
+      for (const f of data.features) {
+        const color = f.kind === 'protected' ? '#3a9a5b' : '#2a7fbf';
+        for (const ring of f.rings) {
+          const opts = { color, weight: 2, fillColor: color, fillOpacity: 0.25 };
+          const shape = ring.closed ? L.polygon(ring.points, opts) : L.polyline(ring.points, { color, weight: 2 });
+          shape.bindPopup('<div class="point-popup"><div class="pp-title">' + esc(f.name || (f.kind === 'protected' ? 'Área protegida' : 'Corpo d’água')) + '</div>' +
+            '<div class="pp-sub">' + (f.kind === 'protected' ? 'Área protegida / reserva' : 'Represa ou lago') +
+            (f.operator ? ' · ' + esc(f.operator) : '') + '</div></div>').addTo(g);
+        }
+      }
+      setNote('water', data.truncated ? 'Mostrando só parte das áreas; aproxime o mapa.' : '');
+    } catch (err) {
+      if (id !== themeReq.water) return;
+      g.clearLayers();
+      setNote('water', 'Não foi possível carregar os mananciais agora.');
+    }
+  }
+
+  // Incidentes de transito na area visivel (lista abaixo do mapa)
+  const trafficCard = $('trafficCard');
+  const trafficList = $('trafficList');
+  async function loadTrafficPanel() {
+    const v = view();
+    if (span(v) > 0.8) {
+      trafficCard.style.display = 'block';
+      trafficList.innerHTML = '<p class="risk-note">Aproxime o mapa para listar os incidentes de trânsito da área.</p>';
+      hotFor('traffic').clearLayers();
+      return;
+    }
+    const id = (themeReq.trafficPanel = (themeReq.trafficPanel || 0) + 1);
+    try {
+      const res = await fetch(GATEWAY_URL + '/api/traffic/incidents?' + qs(v));
+      const data = await res.json();
+      if (id !== themeReq.trafficPanel || !activeThemes.has('traffic')) return;
+      if (!res.ok) throw new Error(data.error || 'erro');
+      trafficCard.style.display = 'block';
+      drawIncidentPins(data.items || []);
+      if (!data.total) { trafficList.innerHTML = '<p class="risk-note">Nenhum incidente registrado nesta área agora.</p>'; return; }
+      const cats = Object.keys(data.byCategory).map((k) => data.byCategory[k] + ' ' + k.toLowerCase()).join(' · ');
+      trafficList.innerHTML = '<p class="risk-note" style="margin:0 0 8px">' + data.total + ' incidente(s): ' + esc(cats) +
+        (data.totalDelaySec ? ' · atraso somado de ' + Math.round(data.totalDelaySec / 60) + ' min' : '') + '</p>' +
+        data.items.slice(0, 12).map((i) => '<div class="inc-item"><b>' + esc(i.categoryLabel) + '</b> <span>(' + esc(i.severityLabel) + ')</span>' +
+          (i.from || i.to ? '<br><span>' + esc([i.from, i.to].filter(Boolean).join(' → ')) + '</span>' : '') +
+          (i.description ? '<br><span>' + esc(i.description) + '</span>' : '') + '</div>').join('');
+    } catch (err) {
+      if (id !== themeReq.trafficPanel) return;
+      trafficCard.style.display = 'block';
+      trafficList.innerHTML = '<p class="risk-note">Não foi possível carregar os incidentes agora.</p>';
+    }
+  }
+
+  function setTiles(t, on) {
+    if (!map) return;
+    if (!themeTiles[t.key]) {
+      if (t.key === 'traffic') {
+        themeTiles[t.key] = L.layerGroup([
+          L.tileLayer(GATEWAY_URL + '/api/traffic/tiles/flow/{z}/{x}/{y}.png', { maxZoom: 18, opacity: 0.85, attribution: 'Trânsito &copy; TomTom' }),
+          L.tileLayer(GATEWAY_URL + '/api/traffic/tiles/incidents/{z}/{x}/{y}.png', { maxZoom: 18, opacity: 0.95 })
+        ]);
+      } else if (t.key === 'forest' && deforestationUrl) {
+        themeTiles[t.key] = L.tileLayer(deforestationUrl, { maxZoom: 18, maxNativeZoom: 12, opacity: 0.75,
+          attribution: 'Desmatamento &copy; Global Forest Watch (UMD/Hansen)' });
+      }
+    }
+    const layer = themeTiles[t.key];
+    if (!layer) return;
+    if (on) layer.addTo(map); else map.removeLayer(layer);
+  }
+
+  // ===== Focos: pinos nos pontos criticos de cada tema =====
+  const hotGroups = {};
+  const HOT_ICON = { air: '🌫️', flood: '🌊', inversion: '🌡️', traffic: '🚦' };
+  const ALERT_THEME = { 'air-quality': 'air', flood: 'flood', 'thermal-inversion': 'inversion', traffic: 'traffic' };
+  const alertPins = map ? L.layerGroup() : null;
+  let lastAlerts = [];
+
+  function hotFor(key) {
+    if (!hotGroups[key]) hotGroups[key] = L.layerGroup();
+    return hotGroups[key];
+  }
+  function pinMarker(lat, lon, emoji, score, html) {
+    const icon = L.divIcon({ className: '', html: '<div class="hot-pin hot-' + score + '"><span>' + emoji + '</span></div>',
+      iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -28] });
+    return L.marker([lat, lon], { icon, zIndexOffset: 500 }).bindPopup(html, { maxWidth: 260 });
+  }
+  function hotPopup(title, detail, lat, lon, name) {
+    return '<div class="point-popup"><div class="pp-title">' + esc(title) + '</div>' +
+      (detail ? '<div class="pp-sub">' + esc(detail) + '</div>' : '') +
+      '<div class="pp-coords">' + lat.toFixed(2) + '°, ' + lon.toFixed(2) + '°</div>' +
+      '<button type="button" class="pp-action" onclick="respiraGo(' + lat + ',' + lon + ',\'' + String(name).replace(/[\\\'"<>&]/g, '') + '\')">Ver detalhes deste local</button></div>';
+  }
+  window.respiraGo = function (lat, lon, name) { if (map) map.closePopup(); loadPlace(lat, lon, name); };
+
+  // Gravidade de uma celula da grade (null = nao e foco)
+  function cellHot(theme, c) {
+    if (theme === 'air') {
+      if (c.aqi == null || c.aqi < 60) return null;
+      return { score: c.aqi >= 80 ? 3 : 2, rank: c.aqi, title: 'Poluição do ar alta', detail: 'IQA ' + Math.round(c.aqi) + ' · ' + eaqiLabel(c.aqi) };
+    }
+    if (theme === 'flood') {
+      const a = c.mm24 || 0; const h = c.maxHourly || 0;
+      const lvl = (a >= 100 || h >= 60) ? 3 : (a >= 50 || h >= 30) ? 2 : 0;
+      if (!lvl) return null;
+      return { score: lvl, rank: a, title: 'Risco ' + (lvl === 3 ? 'muito alto' : 'alto') + ' de alagamento',
+        detail: a + ' mm previstos em 24 h (máx. ' + h + ' mm/h)' };
+    }
+    if (theme === 'inversion') {
+      if (c.maxStrength == null || c.maxStrength < 1.5) return null;
+      return { score: c.maxStrength >= 3 ? 3 : 2, rank: c.maxStrength, title: 'Inversão térmica ' + (c.maxStrength >= 3 ? 'forte' : 'moderada'),
+        detail: 'Intensidade máxima de ' + c.maxStrength + ' °C nas próximas 24 h' };
+    }
+    return null;
+  }
+
+  function drawGridPins(theme, data) {
+    const g = hotFor(theme);
+    g.clearLayers();
+    if (data.step > 1) return;   // em escala continental o centro da celula nao diz nada; os alertas cobrem esse caso
+    data.cells.map((c) => ({ c, h: cellHot(theme, c) })).filter((x) => x.h)
+      .sort((a, b) => b.h.score - a.h.score || b.h.rank - a.h.rank).slice(0, 6)
+      .forEach(({ c, h }) => pinMarker(c.lat, c.lon, HOT_ICON[theme], h.score,
+        hotPopup(h.title, h.detail, c.lat, c.lon, h.title)).addTo(g));
+  }
+
+  const TRAFFIC_ICON = { 1: '💥', 6: '🐢', 7: '🚧', 8: '⛔', 9: '🚧', 11: '🌊', 14: '🚘' };
+  function drawIncidentPins(items) {
+    const g = hotFor('traffic');
+    g.clearLayers();
+    items.filter((i) => i.lat != null && (i.severity >= 2 && i.severity !== 4 || i.category === 8 || i.category === 1)).slice(0, 15)
+      .forEach((i) => pinMarker(i.lat, i.lon, TRAFFIC_ICON[i.category] || '🚦', i.category === 8 || i.severity === 3 ? 3 : 2,
+        hotPopup(i.categoryLabel + ' (' + i.severityLabel + ')',
+          [i.from && i.to ? i.from + ' → ' + i.to : (i.from || i.to), i.description].filter(Boolean).join(' · '),
+          i.lat, i.lon, 'Incidente de trânsito')).addTo(g));
+  }
+
+  // Alertas do monitoramento: aparecem como pinos quando o tema correspondente esta ligado
+  function renderAlertPins() {
+    if (!alertPins) return;
+    alertPins.clearLayers();
+    const seen = new Set();
+    for (const a of lastAlerts) {
+      const theme = ALERT_THEME[a.kind];
+      if (!theme || !activeThemes.has(theme) || !Number.isFinite(a.lat) || !Number.isFinite(a.lon)) continue;
+      const k = a.kind + a.lat.toFixed(2) + a.lon.toFixed(2);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      pinMarker(a.lat, a.lon, ALERT_ICON[a.kind] || '⚠️', a.level === 'alta' ? 3 : 1,
+        hotPopup(a.title, (a.detail || '') + ' · ' + ago(a.ts), a.lat, a.lon, a.detail || 'Local em alerta')).addTo(alertPins);
+    }
+  }
+
+  // Aplica o estado de activeThemes ao mapa (adiciona/remove camadas e recarrega dados).
+  function syncThemes() {
+    if (!map) return;
+    for (const t of THEMES) {
+      const on = activeThemes.has(t.key);
+      if (t.kind === 'tiles') { setTiles(t, on); }
+      else {
+        const g = groupFor(t.key);
+        if (on && !map.hasLayer(g)) g.addTo(map);
+        if (!on) { map.removeLayer(g); g.clearLayers(); themeReq[t.key] = (themeReq[t.key] || 0) + 1; }
+      }
+      if (HOT_ICON[t.key]) {
+        const hg = hotFor(t.key);
+        if (on && !map.hasLayer(hg)) hg.addTo(map);
+        if (!on) { map.removeLayer(hg); hg.clearLayers(); }
+      }
+      if (!on) setNote(t.key, '');
+    }
+    if (!map.hasLayer(alertPins)) alertPins.addTo(map);
+    renderAlertPins();
+    if (!activeThemes.has('traffic')) { trafficCard.style.display = 'none'; }
+    renderFilters();
+    renderLegends();
+    refreshThemes();
+  }
+
+  function refreshThemes() {
+    if (!map) return;
+    for (const t of THEMES) {
+      if (!activeThemes.has(t.key)) continue;
+      if (t.kind === 'grid') loadGrid(t);
+      else if (t.key === 'transit') loadTransit();
+      else if (t.key === 'water') loadWater();
+      else if (t.key === 'traffic') loadTrafficPanel();
+    }
+  }
+
+  function toggleTheme(key) {
+    if (activeThemes.has(key)) activeThemes.delete(key); else activeThemes.add(key);
+    try { localStorage.setItem('respira:themes', JSON.stringify([...activeThemes])); } catch (e) { /* ignora */ }
+    syncThemes();
+    // o pop-up aberto passa a mostrar (ou esconder) o dado do tema
+    if (clickPopup && clickPopup.isOpen() && lastClick) queryPoint(lastClick);
+    else if (centerMarker) centerMarker.setPopupContent(selectedPopupHtml());
+  }
+
+  if (map) {
+    let moveTimer = null;
+    map.on('moveend', () => { clearTimeout(moveTimer); moveTimer = setTimeout(refreshThemes, 700); });
+  }
+
+  // ===== Alertas e cidades monitoradas =====
+  const ALERT_ICON = { 'air-quality': '🌫️', flood: '🌊', 'thermal-inversion': '🌡️', traffic: '🚦' };
+
+  function ago(ts) {
+    const m = Math.max(0, Math.round((Date.now() - ts) / 60000));
+    if (m < 1) return 'agora';
+    if (m < 60) return 'há ' + m + ' min';
+    const h = Math.round(m / 60);
+    return h < 24 ? 'há ' + h + ' h' : 'há ' + Math.round(h / 24) + ' d';
+  }
+
+  async function loadAlerts() {
+    const list = $('alertsList');
+    try {
+      const res = await fetch(GATEWAY_URL + '/api/alerts?limit=15');
+      const data = await res.json();
+      if (!res.ok) throw new Error('erro');
+      setDot('alerts', 'ok');
+      lastAlerts = data.alerts;
+      renderAlertPins();
+      list.innerHTML = data.alerts.length ? data.alerts.map((a) =>
+        '<div class="alert-item"><div>' + (ALERT_ICON[a.kind] || '⚠️') + '</div><div><div class="ai-title">' + esc(a.title) + '</div>' +
+        '<div class="ai-sub">' + esc(a.detail || '') + ' · ' + ago(a.ts) + '</div></div>' +
+        '<span class="badge ' + (a.level === 'alta' ? 'lvl-3' : 'lvl-1') + '">' + (a.level === 'alta' ? 'Alta' : 'Média') + '</span></div>').join('')
+        : '<p class="risk-note">Nenhum alerta no momento. O monitoramento verifica as cidades abaixo periodicamente.</p>';
+    } catch (e) {
+      setDot('alerts', 'err');
+      list.innerHTML = '<p class="risk-note">Não foi possível carregar os alertas agora.</p>';
+    }
+  }
+
+  const aqiLvl = (a) => (a == null ? 'lvl-n' : a < 40 ? 'lvl-0' : a < 60 ? 'lvl-1' : a < 80 ? 'lvl-2' : 'lvl-3');
+  const floodLvl = (l) => ({ baixo: 'lvl-0', atencao: 'lvl-1', alto: 'lvl-2', muito_alto: 'lvl-3' }[l] || 'lvl-n');
+  const invLvl = (l) => ({ nenhuma: 'lvl-0', fraca: 'lvl-1', moderada: 'lvl-2', forte: 'lvl-3' }[l] || 'lvl-n');
+
+  async function loadMonitor() {
+    const list = $('monitorList');
+    try {
+      const res = await fetch(GATEWAY_URL + '/api/monitor');
+      const data = await res.json();
+      if (!res.ok) throw new Error('erro');
+      if (!data.locations.length) {
+        list.innerHTML = '<p class="risk-note">' + (data.pending ? 'A primeira verificação acontece logo após a inicialização dos serviços.' : 'Nenhum local monitorado.') + '</p>';
+        return;
+      }
+      list.innerHTML = '<div class="mon-head"><span>Cidade</span><span>Ar</span><span>Alagam.</span><span>Inversão</span></div>' +
+        data.locations.map((l) =>
+          '<button type="button" class="mon-row" data-lat="' + l.lat + '" data-lon="' + l.lon + '" data-name="' + esc(l.name) + '">' +
+          '<span class="mn">' + esc(l.name) + '</span>' +
+          '<span class="badge ' + aqiLvl(l.aqi) + '">' + (l.aqi == null ? '—' : l.aqi) + '</span>' +
+          '<span class="badge ' + floodLvl(l.flood && l.flood.level) + '">' + (l.flood ? (FLOOD_LBL[l.flood.level] || '—') : '—') + '</span>' +
+          '<span class="badge ' + invLvl(l.inversion && l.inversion.level) + '">' + (l.inversion ? cap(l.inversion.level) : '—') + '</span></button>').join('') +
+        '<p class="risk-note">Atualizado ' + ago(data.updatedAt) + '. Toque numa cidade para ver o detalhe.</p>';
+    } catch (e) {
+      list.innerHTML = '<p class="risk-note">Não foi possível carregar o monitoramento agora.</p>';
+    }
+  }
+  $('monitorList').addEventListener('click', (e) => {
+    const row = e.target.closest('button[data-lat]');
+    if (row) loadPlace(parseFloat(row.dataset.lat), parseFloat(row.dataset.lon), row.dataset.name);
+  });
+
+  function refreshPanels() { loadAlerts(); loadMonitor(); }
+  setInterval(refreshPanels, 120000);
+
+  renderFilters();
+  loadConfig();
+  refreshPanels();
+  tryGeolocation(true);
 })();
 </script>
 </body>
