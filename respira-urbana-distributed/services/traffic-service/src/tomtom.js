@@ -26,7 +26,7 @@ const INCIDENT_FIELDS =
 export function incidentsUrl(b, key) {
   return `${BASE}/traffic/services/5/incidentDetails?key=${encodeURIComponent(key)}` +
     `&bbox=${b.west},${b.south},${b.east},${b.north}` +
-    `&fields=${encodeURIComponent(INCIDENT_FIELDS)}&language=pt-BR&timeValidityFilter=present`;
+    `&fields=${encodeURIComponent(INCIDENT_FIELDS)}&timeValidityFilter=present`;
 }
 
 // iconCategory da TomTom -> rotulo

@@ -5,7 +5,7 @@
 //   node scripts/check-apis.mjs                 (Node 18+)
 //   docker run --rm -v "$PWD":/w -w /w node:22-alpine node scripts/check-apis.mjs     (sem Node instalado)
 //
-// Le as chaves de .env (OPENWEATHER_API_KEY, TOMTOM_API_KEY, DEFORESTATION_TILES_URL).
+// Le as chaves de .env (OPENWEATHER_API_KEY, TOMTOM_API_KEY, DEFORESTATION_TILES_URL, GFW_API_KEY, GFW_ORIGIN).
 // Codigo de saida 0 = tudo certo; 1 = alguma verificacao falhou (ou foi pulada por falta de chave).
 import fs from 'node:fs';
 
@@ -16,7 +16,7 @@ try {
     if (m && !line.trim().startsWith('#')) env[m[1]] = m[2];
   }
 } catch { /* sem .env: so as APIs sem chave serao testadas */ }
-for (const k of ['OPENWEATHER_API_KEY', 'TOMTOM_API_KEY', 'DEFORESTATION_TILES_URL']) if (process.env[k]) env[k] = process.env[k];
+for (const k of ['OPENWEATHER_API_KEY', 'TOMTOM_API_KEY', 'DEFORESTATION_TILES_URL', 'GFW_API_KEY', 'GFW_ORIGIN']) if (process.env[k]) env[k] = process.env[k];
 
 const LAT = -22.88; const LON = -48.44;          // Botucatu-SP
 const DEFAULT_GFW = 'https://tiles.globalforestwatch.org/umd_tree_cover_loss/v1.8/tcd_30/{z}/{x}/{y}.png';
@@ -55,9 +55,20 @@ const checks = [
     const j = await r.json(); return r.ok && j.results?.[0] ? j.results[0].name : `HTTP ${r.status}`;
   }],
   ['Overpass/OSM (transporte publico e mananciais)', async () => {
+    // o servico tenta os dois servidores publicos em ordem; aqui testamos os dois e basta um responder
     const q = '[out:json][timeout:25];(node["railway"="station"](-23.6,-46.7,-23.5,-46.6););out body 5;';
-    const r = await get('https://overpass-api.de/api/interpreter', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', 'user-agent': 'RespiraUrbana/1.0 (check-apis)' }, body: 'data=' + encodeURIComponent(q) });
-    const j = await r.json(); return r.ok && Array.isArray(j.elements) ? `${j.elements.length} estacoes` : `HTTP ${r.status}`;
+    const servers = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+    const notes = [];
+    for (const url of servers) {
+      try {
+        const r = await get(url, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', 'user-agent': 'RespiraUrbana/1.0 (check-apis)' }, body: 'data=' + encodeURIComponent(q) });
+        const text = await r.text();
+        let j = null; try { j = JSON.parse(text); } catch { /* pagina de erro (HTML) */ }
+        if (r.ok && Array.isArray(j?.elements)) return `${j.elements.length} estacoes (${new URL(url).host}${notes.length ? '; o outro servidor falhou: ' + notes.join(', ') : ''})`;
+        notes.push(`${new URL(url).host} HTTP ${r.status}`);
+      } catch (e) { notes.push(`${new URL(url).host} ${e.cause?.code || e.message}`); }
+    }
+    return `HTTP 5xx nos dois servidores (${notes.join('; ')}). O Overpass e publico e fica sobrecarregado as vezes: tente de novo em alguns minutos.`;
   }],
   ['OpenWeatherMap tiles (camadas de clima)', async () => {
     if (!OWM) return 'PULADO: OPENWEATHER_API_KEY ausente';
@@ -77,7 +88,7 @@ const checks = [
   ['TomTom detalhes de incidentes', async () => {
     if (!TT) return 'PULADO: TOMTOM_API_KEY ausente';
     const f = encodeURIComponent('{incidents{type,geometry{type,coordinates},properties{iconCategory,magnitudeOfDelay,events{description},from,to,length,delay,roadNumbers}}}');
-    const r = await get(`https://api.tomtom.com/traffic/services/5/incidentDetails?key=${TT}&bbox=-46.75,-23.65,-46.5,-23.45&fields=${f}&language=pt-BR&timeValidityFilter=present`);
+    const r = await get(`https://api.tomtom.com/traffic/services/5/incidentDetails?key=${TT}&bbox=-46.75,-23.65,-46.5,-23.45&fields=${f}&timeValidityFilter=present`);
     const j = await r.json(); return r.ok && Array.isArray(j.incidents) ? `${j.incidents.length} incidentes (Sao Paulo)` : `HTTP ${r.status} ${JSON.stringify(j).slice(0, 140)}`;
   }],
   ['TomTom fluxo em um ponto', async () => {
@@ -89,6 +100,23 @@ const checks = [
     const url = (env.DEFORESTATION_TILES_URL || DEFAULT_GFW).replace('{z}', '6').replace('{x}', '23').replace('{y}', '34');
     const r = await get(url);
     return r.ok && await isPng(r) ? 'PNG ok' : `HTTP ${r.status} (se 404, ajuste a versao em DEFORESTATION_TILES_URL)`;
+  }],
+  ['GFW Data API (alertas de desmatamento)', async () => {
+    if (!env.GFW_API_KEY) return 'PULADO: GFW_API_KEY ausente (node scripts/gfw-key.mjs)';
+    const since = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+    const d = 0.02;     // ~2 km em volta de um ponto da Amazonia (Novo Progresso-PA), onde ha alertas quase sempre
+    const [la, lo] = [-7.0, -55.4];
+    const r = await get('https://data-api.globalforestwatch.org/dataset/gfw_integrated_alerts/latest/query/json', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': env.GFW_API_KEY, origin: env.GFW_ORIGIN || 'http://localhost' },
+      body: JSON.stringify({
+        sql: `SELECT longitude, latitude, gfw_integrated_alerts__date, gfw_integrated_alerts__confidence FROM results WHERE gfw_integrated_alerts__date >= '${since}'`,
+        geometry: { type: 'Polygon', coordinates: [[[lo - d, la - d], [lo + d, la - d], [lo + d, la + d], [lo - d, la + d], [lo - d, la - d]]] }
+      })
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401 || r.status === 403) return `HTTP ${r.status} (chave ou dominio recusados: confira GFW_API_KEY e GFW_ORIGIN)`;
+    return r.ok && Array.isArray(j.data) ? `${j.data.length} pixels de alerta em 7 dias (area de teste)` : `HTTP ${r.status} ${JSON.stringify(j).slice(0, 140)}`;
   }],
   ['Seu gateway local (http://localhost:3000)', async () => {
     const r = await get('http://localhost:3000/api/config').catch(() => null);

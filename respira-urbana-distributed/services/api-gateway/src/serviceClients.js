@@ -18,13 +18,11 @@ export async function callService(baseUrl, path) {
   return res.json();
 }
 
-// Proxy: repassa a requisicao do cliente (metodo, query, corpo JSON e token de
-// gestor) para um microsservico e devolve o status e o JSON que ele respondeu.
+// Proxy: repassa a requisicao do cliente (metodo, query e corpo JSON) para um microsservico e devolve o status e o JSON que ele respondeu.
 export async function forward(req, res, baseUrl, path, { timeoutMs = 8000 } = {}) {
   const qs = new URLSearchParams(req.query || {}).toString();
   const url = `${baseUrl}${path}${qs ? '?' + qs : ''}`;
   const init = { method: req.method, headers: {} };
-  if (req.headers['x-admin-token']) init.headers['x-admin-token'] = req.headers['x-admin-token'];
   if (['POST', 'PATCH', 'PUT'].includes(req.method)) {
     init.headers['content-type'] = 'application/json';
     init.body = JSON.stringify(req.body ?? {});

@@ -358,8 +358,12 @@
 <script>
 (function () {
   const params = new URLSearchParams(window.location.search);
-  // ?gateway=… na URL, ou window.RESPIRA_GATEWAY (definido pelo app Android em mobile/), ou o padrao local
-  const GATEWAY_URL = params.get('gateway') || window.RESPIRA_GATEWAY || 'http://localhost:3000';
+  // ?gateway=… na URL, ou window.RESPIRA_GATEWAY (definido pelo app Android em mobile/), ou a mesma origem, ou o padrao local
+  // Hospedado em producao (porta padrao 80/443, ex.: Caddy servindo o client e o /api no mesmo dominio),
+  // o gateway e a propria origem. No app Android (window.Capacitor) vale o endereco salvo pelo usuario.
+  const SAME_ORIGIN = (/^https?:$/.test(window.location.protocol) && window.location.port === '' && !window.Capacitor)
+    ? window.location.origin : null;
+  const GATEWAY_URL = params.get('gateway') || window.RESPIRA_GATEWAY || SAME_ORIGIN || 'http://localhost:3000';
 
   const $ = (id) => document.getElementById(id);
   const form = $('searchForm');
@@ -461,6 +465,8 @@
       [1040, 'rgb(251,85,21)'], [1060, 'rgb(243,54,59)', '1060'], [1080, 'rgb(198,0,0)', '1080'] ] }
   };
   let activeLayer = 'temp_new';
+  // alertas de clima viram pinos quando a camada de clima correspondente esta ativa
+  const ALERT_LAYER = { heat: 'temp_new', cold: 'temp_new', wind: 'wind_new', storm: 'precipitation_new' };
 
   // ----- Temas de monitoramento (alem das camadas meteorologicas) -----
   const THEMES = [
@@ -480,7 +486,8 @@
       ['#2e9e4f', 'Fluindo'], ['#f0a020', 'Lento'], ['#d9381e', 'Congestionado'] ],
       hint: 'Ícones: acidentes, obras e vias interditadas.' },
     transit: { title: 'Transporte público', unit: 'OSM', bands: [
-      ['#7b2cbf', 'Metrô'], ['#1d6fa5', 'Trem'], ['#2a9d8f', 'Bonde / VLT'], ['#e07a1f', 'Terminal de ônibus'], ['#b0873a', 'Ponto de ônibus (zoom alto)'] ] },
+      ['#7b2cbf', 'Metrô'], ['#1d6fa5', 'Trem'], ['#2a9d8f', 'Bonde / VLT'], ['#e07a1f', 'Terminal de ônibus'], ['#b0873a', 'Ponto de ônibus (zoom alto)'] ],
+      hint: 'Toque no mapa para ver a estação mais próxima. Os pinos 🚌 marcam estações com via interditada ou incidente grave por perto.' },
     flood: { title: 'Alagamento — chuva prevista, 24 h', unit: 'risco', bands: [
       ['#8ecae6', 'Chuva fraca (≥ 5 mm)'], ['#f4d35e', 'Atenção (≥ 30 mm ou 20 mm/h)'],
       ['#ee964b', 'Alto (≥ 50 mm ou 30 mm/h)'], ['#d62828', 'Muito alto (≥ 100 mm ou 60 mm/h)'] ] },
@@ -489,9 +496,10 @@
       hint: 'Diferença T(180 m) − T(2 m).' },
     water: { title: 'Mananciais e áreas protegidas', unit: 'referência', bands: [
       ['#2a7fbf', 'Represas e lagos'], ['#3a9a5b', 'Áreas protegidas / reservas'] ],
-      hint: 'Dados do OpenStreetMap; não é o limite legal da área de manancial.' },
-    forest: { title: 'Desmatamento', unit: 'perda de cobertura', bands: [
-      ['#dc6673', 'Perda de cobertura arbórea (GFW)'] ] }
+      hint: 'Toque em qualquer ponto do mapa para saber se ele está em área de manancial. Dados do OpenStreetMap; não é o limite legal.' },
+    forest: { title: 'Desmatamento', unit: 'GFW', bands: [
+      ['#dc6673', 'Perda de cobertura arbórea (histórico)'], ['#2e7d32', '🌳 Pinos: alertas dos últimos 30 dias'] ],
+      hint: 'Os pinos aparecem com o mapa aproximado e a chave do GFW ativa no servidor.' }
   };
   const activeThemes = new Set();
   const themeNotes = {};
@@ -562,6 +570,7 @@
     }
     renderFilters();
     renderLegends();
+    renderAlertPins();
     if (lastPoint && clickPopup && clickPopup.isOpen()) {
       clickPopup.setContent(renderPointPopup(lastPoint.data.weather || {}, lastPoint.wrapped, activeLayer, { action: true, extra: lastPoint.data }));
     }
@@ -581,7 +590,8 @@
       : '').join('');
     return '<div class="lg-block"><div class="lg-title">' + def.title + ' <span>(' + def.unit + ')</span></div>' +
       '<div class="lg-bar" style="background-color:' + def.base + '"><div class="lg-fill" style="background:' + gradient + '"></div></div>' +
-      '<div class="lg-scale">' + labels + '</div></div>';
+      '<div class="lg-scale">' + labels + '</div>' +
+      (Object.values(ALERT_LAYER).includes(key) ? '<div class="lg-hint">Pinos: alertas ativos de calor, frio, vento ou tempestade nas cidades monitoradas.</div>' : '') + '</div>';
   }
 
   function bandLegendHtml(key) {
@@ -658,7 +668,27 @@
   const cap = (t) => (t ? t.charAt(0).toUpperCase() + t.slice(1) : '—');
   function eaqiLabel(a) { return EAQI_LBL[Math.min(5, Math.floor(a / 20))]; }
 
-  // Linhas dos temas ativos (poluicao, alagamento, inversao, transito) para os pop-ups.
+  const AREA_KIND = { protected: 'área protegida', water: 'represa/lago' };
+  function areaName(a) { return (a.name || 'sem nome') + ' (' + (AREA_KIND[a.kind] || 'área') + ')'; }
+  function manancialText(m) {
+    const a = (m.areas || [])[0];
+    if (m.status === 'inside' && a) return '⚠️ Dentro de ' + esc(areaName(a));
+    if (m.status === 'near' && a) return 'Perto de ' + esc(areaName(a)) + ' · ' + Math.round(a.distanceKm * 1000) + ' m';
+    return 'Fora das áreas mapeadas';
+  }
+  const STOP_KIND = { metro: 'metrô', train: 'trem', tram: 'bonde/VLT', bus_station: 'terminal de ônibus' };
+  function transitText(t) {
+    const s = (t.stops || [])[0];
+    if (!s) return 'Nenhuma estação a 1 km';
+    return esc((s.name || 'Estação sem nome') + ' (' + (STOP_KIND[s.kind] || 'estação') + ') · ' + Math.round(s.distanceKm * 1000) + ' m');
+  }
+  function forestText(f) {
+    if (!f.available) return 'Alertas desativados (sem chave do GFW)';
+    if (!f.total) return 'Nenhum alerta em ' + f.days + ' dias (10 km)';
+    return f.total + ' alerta' + (f.total > 1 ? 's' : '') + ' em ' + f.days + ' dias (10 km)' + (f.confirmed ? ' · ' + f.confirmed + ' confirmados' : '');
+  }
+
+  // Linhas dos temas ativos (poluicao, alagamento, inversao, transito, manancial, desmatamento) para os pop-ups.
   function themeRows(x, which) {
     const rows = [];
     if (!x) return rows;
@@ -676,6 +706,9 @@
     if (which.has('traffic') && x.traffic && x.traffic.available) {
       rows.push(['Trânsito', cap(x.traffic.level) + ' · ' + Math.round(x.traffic.currentSpeedKmh) + ' km/h']);
     }
+    if (which.has('transit') && x.transit) rows.push(['Transporte público', transitText(x.transit)]);
+    if (which.has('water') && x.manancial) rows.push(['Manancial', manancialText(x.manancial)]);
+    if (which.has('forest') && x.forest) rows.push(['Desmatamento', forestText(x.forest)]);
     return rows;
   }
 
@@ -707,7 +740,7 @@
       { title: selected.label, extra: selected.extra });
   }
 
-  const THEME_INCLUDE = { air: 'air', flood: 'flood', inversion: 'inversion', traffic: 'traffic' };
+  const THEME_INCLUDE = { air: 'air', flood: 'flood', inversion: 'inversion', traffic: 'traffic', transit: 'transit', water: 'manancial', forest: 'forest' };
 
   async function queryPoint(latlng) {
     const id = ++pointReq;
@@ -870,6 +903,7 @@
       setDot('traffic', statusToDot(body.status.traffic));
 
       renderPlace(label, body.weather, body.airQuality, body.status, body.risks, body.traffic);
+      loadGeoCard(lat, lon);
       updateCenterMarker(lat, lon, label, body.weather, body.airQuality,
         { air: body.airQuality, flood: body.risks && body.risks.flood, inversion: body.risks && body.risks.inversion, traffic: body.traffic });
     } catch (err) {
@@ -942,10 +976,55 @@
     }
 
     html += riskCardHtml(risks, traffic, status);
+    html += '<div class="card" id="geoCard"></div>';
     main.innerHTML = html;
   }
 
   function lvlClass(score) { return score == null ? 'lvl-n' : 'lvl-' + score; }
+
+  // Card "Mananciais e desmatamento" do local selecionado. Carrega a parte (o Overpass e o GFW
+  // sao mais lentos que o resto) e nunca atrapalha o resumo: se falhar, so avisa.
+  let geoCardReq = 0;
+  async function loadGeoCard(lat, lon) {
+    const id = ++geoCardReq;
+    const card = $('geoCard');          // o cartao vazio vem de renderPlace
+    if (!card) return;
+    card.innerHTML = '<h2>Mananciais e desmatamento</h2><p class="risk-note">Verificando a região…</p>';
+    let html;
+    try {
+      const res = await fetch(GATEWAY_URL + '/api/point?lat=' + lat + '&lon=' + lon + '&include=manancial,forest');
+      const data = await res.json();
+      if (id !== geoCardReq) return;
+      if (!res.ok) throw new Error(data.error || 'erro');
+      const m = data.manancial; const f = data.forest;
+      html = '<h2>Mananciais e desmatamento</h2>';
+      if (m) {
+        const a = (m.areas || [])[0];
+        const score = m.status === 'inside' ? 2 : m.status === 'near' ? 1 : 0;
+        const lbl = m.status === 'inside' ? 'Dentro' : m.status === 'near' ? 'Perto' : 'Fora';
+        const note = m.status === 'inside' && a ? 'Este local está dentro de ' + esc(areaName(a)) + '. Evite descartar lixo ou esgoto e respeite as regras de uso da área.'
+          : m.status === 'near' && a ? esc(areaName(a)) + ' fica a cerca de ' + Math.round(a.distanceKm * 1000) + ' m.'
+          : 'Nenhuma represa, lago ou área protegida mapeada a menos de 500 m. Dados do OpenStreetMap; não é o limite legal.';
+        html += '<div class="risk-row"><div class="risk-head"><span>💧 Área de manancial</span><span class="badge ' + lvlClass(score) + '">' + lbl + '</span></div>' +
+          '<p class="risk-note">' + note + '</p></div>';
+      } else {
+        html += '<div class="risk-row"><div class="risk-head"><span>💧 Área de manancial</span><span class="badge lvl-n">indisponível</span></div></div>';
+      }
+      if (f && f.available) {
+        const score = !f.total ? 0 : f.confirmed >= 200 ? 3 : f.confirmed >= 50 ? 2 : 1;
+        html += '<div class="risk-row"><div class="risk-head"><span>🌳 Desmatamento (' + f.days + ' dias, 10 km)</span>' +
+          '<span class="badge ' + lvlClass(score) + '">' + (score === 0 ? 'Sem alertas' : score === 1 ? 'Atenção' : score === 2 ? 'Alto' : 'Muito alto') + '</span></div>' +
+          '<p class="risk-note">' + esc(forestText(f)) + '. Alertas do Global Forest Watch (satélite): podem indicar desmatamento recente, mas pedem confirmação em campo.</p></div>';
+      } else {
+        html += '<div class="risk-row"><div class="risk-head"><span>🌳 Desmatamento recente</span><span class="badge lvl-n">' + (f ? 'sem chave GFW' : 'indisponível') + '</span></div>' +
+          (f ? '<p class="risk-note">O servidor ainda não tem a chave do Global Forest Watch. Ligue a camada Desmatamento para ver a perda de cobertura histórica.</p>' : '') + '</div>';
+      }
+    } catch (err) {
+      if (id !== geoCardReq) return;
+      html = '<h2>Mananciais e desmatamento</h2><p class="error-note">Não foi possível verificar agora.</p>';
+    }
+    if ($('geoCard')) $('geoCard').innerHTML = html;
+  }
 
   function riskCardHtml(risks, traffic, status) {
     const f = risks && risks.flood;
@@ -1163,10 +1242,39 @@
     }
   }
 
+  // Pinos 💧: desmatamento (alertas do GFW) dentro de mananciais e areas protegidas da regiao.
+  // Nunca derruba a camada: se falhar ou nao houver chave, so devolve um aviso.
+  async function loadWaterPins(v, id) {
+    const g = hotFor('water');
+    g.clearLayers();
+    try {
+      const snap = (x) => Math.round(x * 20) / 20;           // centro em grade de 0,05 grau: poucas consultas diferentes ao GFW
+      const radius = span(v) > 0.5 ? 30 : span(v) > 0.2 ? 20 : 10;
+      const res = await fetch(GATEWAY_URL + '/api/manancial/watch?lat=' + snap((v.north + v.south) / 2).toFixed(2) +
+        '&lon=' + snap((v.east + v.west) / 2).toFixed(2) + '&radiusKm=' + radius + '&days=30');
+      const data = await res.json();
+      if (id !== themeReq.water || !activeThemes.has('water')) return '';
+      if (!res.ok) return '';
+      if (!data.available) return 'Pinos de desmatamento em mananciais precisam da chave do GFW no servidor.';
+      let pins = 0;
+      for (const a of data.areas || []) {
+        if (!a.confirmed) continue;
+        (a.cells || []).slice(0, 2).forEach((c) => {
+          pinMarker(c.lat, c.lon, '💧', a.confirmed >= 30 ? 3 : 2,
+            hotPopup('Desmatamento em ' + (a.name || (a.kind === 'water' ? 'represa/lago' : 'área protegida')),
+              c.count + ' alertas (' + c.confirmed + ' confirmados) em ~1 km · ' + a.confirmed + ' confirmados na área em ' + data.days + ' dias',
+              c.lat, c.lon, a.name || 'Manancial')).addTo(g);
+          pins++;
+        });
+      }
+      return pins ? '' : 'Sem alertas de desmatamento nos mananciais desta região (30 dias).';
+    } catch (err) { return ''; }
+  }
+
   async function loadWater() {
     const v = view();
     const g = groupFor('water');
-    if (span(v) > 1.5) { g.clearLayers(); setNote('water', 'Aproxime o mapa para ver mananciais e áreas protegidas.'); return; }
+    if (span(v) > 1.5) { g.clearLayers(); hotFor('water').clearLayers(); setNote('water', 'Aproxime o mapa para ver mananciais e áreas protegidas.'); return; }
     const id = (themeReq.water = (themeReq.water || 0) + 1);
     try {
       const res = await fetch(GATEWAY_URL + '/api/watersheds?' + qs(v));
@@ -1184,11 +1292,41 @@
             (f.operator ? ' · ' + esc(f.operator) : '') + '</div></div>').addTo(g);
         }
       }
-      setNote('water', data.truncated ? 'Mostrando só parte das áreas; aproxime o mapa.' : '');
+      const pinNote = await loadWaterPins(v, id);
+      if (id !== themeReq.water || !activeThemes.has('water')) return;
+      setNote('water', [data.truncated ? 'Mostrando só parte das áreas; aproxime o mapa.' : '', pinNote].filter(Boolean).join(' '));
     } catch (err) {
       if (id !== themeReq.water) return;
       g.clearLayers();
       setNote('water', 'Não foi possível carregar os mananciais agora.');
+    }
+  }
+
+  // Desmatamento: focos (alertas do GFW) dos ultimos 30 dias na area visivel, como pinos.
+  // Precisa da chave do GFW no servidor; sem ela o mapa segue com os tiles de perda de cobertura.
+  async function loadForest() {
+    const v = view();
+    const g = hotFor('forest');
+    if (span(v) > 0.6) { g.clearLayers(); setNote('forest', 'Aproxime o mapa para ver os focos dos últimos 30 dias.'); return; }
+    const id = (themeReq.forest = (themeReq.forest || 0) + 1);
+    try {
+      const res = await fetch(GATEWAY_URL + '/api/forest/alerts?' + qs(v) + '&days=30');
+      const data = await res.json();
+      if (id !== themeReq.forest || !activeThemes.has('forest')) return;
+      if (!res.ok) throw new Error(data.error || 'erro');
+      g.clearLayers();
+      if (!data.available) { setNote('forest', 'Focos recentes indisponíveis: o servidor ainda não tem a chave do GFW.'); return; }
+      data.cells.slice(0, 12).forEach((c) => {
+        const when = c.latest ? ' · último em ' + c.latest.split('-').reverse().join('/') : '';
+        pinMarker(c.lat, c.lon, '🌳', c.confirmed >= 20 ? 3 : 2,
+          hotPopup('Desmatamento recente', c.count + ' alertas (' + c.confirmed + ' confirmados) em ~1 km' + when,
+            c.lat, c.lon, 'Foco de desmatamento')).addTo(g);
+      });
+      setNote('forest', data.total ? data.total + ' alertas nos últimos 30 dias nesta área.' : 'Nenhum alerta recente nesta área.');
+    } catch (err) {
+      if (id !== themeReq.forest) return;
+      g.clearLayers();
+      setNote('forest', 'Não foi possível carregar os focos de desmatamento agora.');
     }
   }
 
@@ -1245,8 +1383,8 @@
 
   // ===== Focos: pinos nos pontos criticos de cada tema =====
   const hotGroups = {};
-  const HOT_ICON = { air: '🌫️', flood: '🌊', inversion: '🌡️', traffic: '🚦' };
-  const ALERT_THEME = { 'air-quality': 'air', flood: 'flood', 'thermal-inversion': 'inversion', traffic: 'traffic' };
+  const HOT_ICON = { air: '🌫️', flood: '🌊', inversion: '🌡️', traffic: '🚦', forest: '🌳', water: '💧' };
+  const ALERT_THEME = { 'air-quality': 'air', flood: 'flood', 'thermal-inversion': 'inversion', traffic: 'traffic', deforestation: 'forest', manancial: 'water', transit: 'transit' };
   const alertPins = map ? L.layerGroup() : null;
   let lastAlerts = [];
 
@@ -1316,7 +1454,8 @@
     const seen = new Set();
     for (const a of lastAlerts) {
       const theme = ALERT_THEME[a.kind];
-      if (!theme || !activeThemes.has(theme) || !Number.isFinite(a.lat) || !Number.isFinite(a.lon)) continue;
+      const shown = theme ? activeThemes.has(theme) : ALERT_LAYER[a.kind] === activeLayer;
+      if (!shown || !Number.isFinite(a.lat) || !Number.isFinite(a.lon)) continue;
       const k = a.kind + a.lat.toFixed(2) + a.lon.toFixed(2);
       if (seen.has(k)) continue;
       seen.add(k);
@@ -1358,6 +1497,7 @@
       if (t.kind === 'grid') loadGrid(t);
       else if (t.key === 'transit') loadTransit();
       else if (t.key === 'water') loadWater();
+      else if (t.key === 'forest') loadForest();
       else if (t.key === 'traffic') loadTrafficPanel();
     }
   }
@@ -1377,7 +1517,7 @@
   }
 
   // ===== Alertas e cidades monitoradas =====
-  const ALERT_ICON = { 'air-quality': '🌫️', flood: '🌊', 'thermal-inversion': '🌡️', traffic: '🚦' };
+  const ALERT_ICON = { 'air-quality': '🌫️', flood: '🌊', 'thermal-inversion': '🌡️', traffic: '🚦', deforestation: '🌳', manancial: '💧', heat: '🥵', cold: '🥶', wind: '💨', storm: '⛈️', transit: '🚌' };
 
   function ago(ts) {
     const m = Math.max(0, Math.round((Date.now() - ts) / 60000));

@@ -53,6 +53,143 @@
   var api = { normalizeUrl: normalizeUrl, testGateway: testGateway, stored: stored, EMULATOR: EMULATOR, isNative: isNative };
   root.RespiraMobile = api;
 
+  // ===== Notificacoes push (FCM via @capacitor/push-notifications) =====
+  var PUSH_KEY = 'respira:push';
+  var TOKEN_KEY = 'respira:pushToken';
+  var DEFAULT_PREFS = { enabled: false, minLevel: 'media', scope: 'all' };
+
+  function pushPrefs() {
+    try {
+      var p = JSON.parse(localStorage.getItem(PUSH_KEY) || 'null');
+      return {
+        enabled: Boolean(p && p.enabled),
+        minLevel: p && p.minLevel === 'alta' ? 'alta' : 'media',
+        scope: p && p.scope === 'near' ? 'near' : 'all'
+      };
+    } catch (e) { return { enabled: DEFAULT_PREFS.enabled, minLevel: DEFAULT_PREFS.minLevel, scope: DEFAULT_PREFS.scope }; }
+  }
+  function savePushPrefs(p) { try { localStorage.setItem(PUSH_KEY, JSON.stringify(p)); } catch (e) { /* sem storage */ } }
+
+  // Corpo do cadastro no servidor. "near" envia a posicao (o servidor arredonda para ~1 km).
+  function buildRegistration(prefs, token, pos) {
+    var body = { token: token, platform: 'android', minLevel: prefs.minLevel };
+    if (prefs.scope === 'near' && pos && isFinite(pos.lat) && isFinite(pos.lon)) {
+      body.lat = pos.lat; body.lon = pos.lon; body.radiusKm = 100;
+    }
+    return body;
+  }
+
+  async function postJson(path, body) {
+    var g = stored();
+    if (!g) throw new Error('sem servidor');
+    var res = await root.fetch(g + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    var data = null;
+    try { data = await res.json(); } catch (e) { /* sem corpo */ }
+    return { ok: res.ok, status: res.status, data: data };
+  }
+
+  function getPosition() {
+    return new Promise(function (resolve) {
+      try {
+        var G = root.Capacitor && root.Capacitor.Plugins && root.Capacitor.Plugins.Geolocation;
+        if (G && G.getCurrentPosition) {
+          G.getCurrentPosition({ timeout: 8000 }).then(function (p) { resolve({ lat: p.coords.latitude, lon: p.coords.longitude }); }, function () { resolve(null); });
+          return;
+        }
+        if (root.navigator && root.navigator.geolocation) {
+          root.navigator.geolocation.getCurrentPosition(function (p) { resolve({ lat: p.coords.latitude, lon: p.coords.longitude }); }, function () { resolve(null); }, { timeout: 8000 });
+          return;
+        }
+      } catch (e) { /* cai para null */ }
+      resolve(null);
+    });
+  }
+
+  var pushStatusCb = function () {};
+  var listening = false;
+
+  function plugin() { return root.Capacitor && root.Capacitor.Plugins && root.Capacitor.Plugins.PushNotifications; }
+
+  function banner(title, body, data) {
+    var d = root.document;
+    if (!d || !d.createElement || !d.body) return;
+    var el = d.createElement('div');
+    el.setAttribute('role', 'alert');
+    el.style.cssText = 'position:fixed;left:12px;right:12px;top:calc(env(safe-area-inset-top,0px) + 12px);z-index:3000;background:var(--panel,#fff);color:var(--ink,#10262A);' +
+      'border-left:5px solid var(--coral,#B5473F);border-radius:12px;padding:12px 14px;box-shadow:0 8px 28px rgba(0,0,0,.35);font-family:Inter,sans-serif;font-size:13px;cursor:pointer';
+    el.textContent = '';
+    var b = d.createElement('b'); b.textContent = title || 'Alerta'; b.style.display = 'block';
+    var t = d.createElement('span'); t.textContent = body || '';
+    el.appendChild(b); el.appendChild(t);
+    el.addEventListener('click', function () { openFromNotification(data); if (el.remove) el.remove(); });
+    d.body.appendChild(el);
+    setTimeout(function () { if (el.remove) el.remove(); }, 8000);
+  }
+
+  // Tocar na notificacao abre o local do alerta no mapa
+  function openFromNotification(data) {
+    var lat = Number(data && data.lat); var lon = Number(data && data.lon);
+    if (data && data.lat !== '' && data.lon !== '' && isFinite(lat) && isFinite(lon) && typeof root.respiraGo === 'function') {
+      root.respiraGo(lat, lon, (data && data.place) || 'Local do alerta');
+    }
+  }
+
+  async function sendRegistration(token) {
+    var prefs = pushPrefs();
+    var pos = prefs.scope === 'near' ? await getPosition() : null;
+    if (prefs.scope === 'near' && !pos) { pushStatusCb('Não consegui sua localização; recebendo alertas de todas as cidades.', false); }
+    var r = await postJson('/api/push/register', buildRegistration(prefs, token, pos));
+    if (r.status === 503) { pushStatusCb('O servidor ainda não tem as notificações configuradas (FCM).', false); return false; }
+    if (!r.ok) { pushStatusCb('O servidor recusou o cadastro (' + r.status + ').', false); return false; }
+    pushStatusCb('Notificações ativas neste aparelho.', true);
+    return true;
+  }
+
+  function attachListeners(P) {
+    if (listening) return;
+    listening = true;
+    P.addListener('registration', function (t) {
+      try { localStorage.setItem(TOKEN_KEY, t.value); } catch (e) { /* ignora */ }
+      sendRegistration(t.value).catch(function () { pushStatusCb('Não consegui falar com o servidor.', false); });
+    });
+    P.addListener('registrationError', function (e) {
+      pushStatusCb('Falha ao registrar no Firebase: ' + ((e && (e.error || e.message)) || 'erro desconhecido') + '. Confira o google-services.json.', false);
+    });
+    P.addListener('pushNotificationReceived', function (n) { banner(n.title, n.body, n.data); });
+    P.addListener('pushNotificationActionPerformed', function (a) { openFromNotification(a && a.notification && a.notification.data); });
+  }
+
+  // Liga as notificacoes: pede permissao, cria o canal, registra no Firebase e no servidor.
+  async function enablePush() {
+    var P = plugin();
+    if (!P) return { ok: false, message: 'Notificações não estão disponíveis neste aparelho.' };
+    if (!stored()) return { ok: false, message: 'Salve primeiro o endereço do servidor.' };
+    var perm = await P.requestPermissions();
+    if (!perm || perm.receive !== 'granted') return { ok: false, message: 'Permissão negada. Ative as notificações do app nas configurações do Android.' };
+    try { await P.createChannel({ id: 'alerts', name: 'Alertas ambientais', description: 'Poluição, alagamento, inversão térmica e trânsito', importance: 4, visibility: 1 }); } catch (e) { /* canal ja existe */ }
+    attachListeners(P);
+    await P.register();   // dispara o evento "registration" com o token
+    return { ok: true, message: 'Registrando…' };
+  }
+
+  async function disablePush() {
+    var P = plugin();
+    var token = null;
+    try { token = localStorage.getItem(TOKEN_KEY); } catch (e) { /* ignora */ }
+    if (token && stored()) { try { await postJson('/api/push/unregister', { token: token }); } catch (e) { /* servidor fora: o token morre sozinho depois */ } }
+    try { localStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignora */ }
+    if (P && P.unregister) { try { await P.unregister(); } catch (e) { /* ignora */ } }
+    return { ok: true, message: 'Notificações desativadas.' };
+  }
+
+  api.pushPrefs = pushPrefs;
+  api.savePushPrefs = savePushPrefs;
+  api.buildRegistration = buildRegistration;
+  api.enablePush = enablePush;
+  api.disablePush = disablePush;
+  api.openFromNotification = openFromNotification;
+  api.onPushStatus = function (cb) { pushStatusCb = cb; };
+
   // O client le window.RESPIRA_GATEWAY na inicializacao
   var saved = stored();
   if (saved) root.RESPIRA_GATEWAY = saved;
@@ -77,6 +214,10 @@
     '.rm-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}' +
     '.rm-btn{flex:1;min-width:110px;padding:10px 12px;border:0;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;background:var(--sage-bg,#E4EFE7);color:var(--accent,#2E5C55)}' +
     '.rm-btn.primary{background:var(--accent,#2E5C55);color:var(--bg,#fff)}' +
+    '.rm-hr{border:0;border-top:1px solid var(--line,#D3E2DC);margin:14px 0 10px}' +
+    '.rm-check{display:flex;align-items:center;gap:8px;font-size:14px}.rm-check input{width:auto}' +
+    '.rm-sel{flex:1;min-width:130px;font-size:12px;color:var(--ink-soft,#4C6660);display:flex;flex-direction:column;gap:3px}' +
+    '.rm-sel select{padding:9px;border-radius:10px;border:1px solid var(--line,#D3E2DC);background:var(--bg,#F2F7F5);color:var(--ink,#10262A);font-size:14px}' +
     '.rm-msg{min-height:18px;margin-top:10px;font-size:13px}.rm-msg.ok{color:var(--sage,#5C8A76)}.rm-msg.err{color:var(--coral,#B5473F)}';
 
   function build() {
@@ -93,6 +234,12 @@
       '<p id="rmHelp">Informe o endereço do computador onde o Docker está rodando, com o celular na mesma rede Wi‑Fi. Ex.: <b>192.168.0.10</b> (a porta 3000 é assumida). No emulador use <b>10.0.2.2</b>.</p>' +
       '<input id="rmInput" type="text" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="192.168.0.10">' +
       '<div class="rm-msg" id="rmMsg" role="status"></div>' +
+      '<hr class="rm-hr">' +
+      '<h2 style="font-size:15px;margin-top:4px">Notificações</h2>' +
+      '<label class="rm-check"><input type="checkbox" id="rmPushOn"> Receber alertas no celular</label>' +
+      '<div class="rm-row"><label class="rm-sel">Nível<select id="rmPushLevel"><option value="media">Todos</option><option value="alta">Só os graves</option></select></label>' +
+      '<label class="rm-sel">Área<select id="rmPushScope"><option value="all">Todas as cidades monitoradas</option><option value="near">Perto de mim (100 km)</option></select></label></div>' +
+      '<div class="rm-msg" id="rmPushMsg" role="status"></div>' +
       '<div class="rm-row"><button type="button" class="rm-btn" id="rmEmu">Usar emulador</button>' +
       '<button type="button" class="rm-btn" id="rmTest">Testar</button></div>' +
       '<div class="rm-row"><button type="button" class="rm-btn" id="rmCancel">Fechar</button>' +
@@ -104,6 +251,7 @@
     function say(text, cls) { msg.textContent = text; msg.className = 'rm-msg ' + (cls || ''); }
     function open(first) {
       input.value = stored() || '';
+      loadPushUi();
       say(first ? 'Falta só isso para começar.' : '', '');
       d.getElementById('rmCancel').style.display = stored() ? '' : 'none';
       back.className = 'rm-back open';
@@ -118,6 +266,29 @@
       say(r.message, r.ok ? 'ok' : 'err');
       return r.ok ? url : null;
     }
+    var pushOn = d.getElementById('rmPushOn');
+    var pushLevel = d.getElementById('rmPushLevel');
+    var pushScope = d.getElementById('rmPushScope');
+    var pushMsg = d.getElementById('rmPushMsg');
+    function pushSay(text, ok) { pushMsg.textContent = text; pushMsg.className = 'rm-msg ' + (ok ? 'ok' : 'err'); }
+    api.onPushStatus(pushSay);
+    function loadPushUi() {
+      var p = pushPrefs();
+      pushOn.checked = p.enabled; pushLevel.value = p.minLevel; pushScope.value = p.scope;
+    }
+    async function applyPush() {
+      var p = { enabled: pushOn.checked, minLevel: pushLevel.value, scope: pushScope.value };
+      savePushPrefs(p);
+      try {
+        var r = p.enabled ? await enablePush() : await disablePush();
+        pushSay(r.message, r.ok);
+        if (!r.ok && p.enabled) { p.enabled = false; savePushPrefs(p); pushOn.checked = false; }
+      } catch (e) { pushSay('Não foi possível alterar as notificações: ' + (e && e.message ? e.message : e), false); }
+    }
+    pushOn.addEventListener('change', applyPush);
+    pushLevel.addEventListener('change', function () { if (pushOn.checked) applyPush(); else savePushPrefs({ enabled: false, minLevel: pushLevel.value, scope: pushScope.value }); });
+    pushScope.addEventListener('change', function () { if (pushOn.checked) applyPush(); else savePushPrefs({ enabled: false, minLevel: pushLevel.value, scope: pushScope.value }); });
+
     d.getElementById('rmEmu').addEventListener('click', function () { input.value = EMULATOR; });
     d.getElementById('rmTest').addEventListener('click', check);
     d.getElementById('rmCancel').addEventListener('click', close);
@@ -144,6 +315,8 @@
       theme.parentNode.insertBefore(gear, theme);
     }
     if (!stored()) open(true);
+    // reenvia o cadastro a cada abertura: o token pode mudar e o servidor remove aparelhos inativos
+    else if (pushPrefs().enabled) enablePush().catch(function () { /* silencioso */ });
   }
 
   if (root.document.readyState === 'loading') root.document.addEventListener('DOMContentLoaded', build);

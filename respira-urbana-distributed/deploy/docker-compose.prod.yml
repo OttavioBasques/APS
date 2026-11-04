@@ -1,0 +1,139 @@
+# Producao em uma VPS: so o Caddy (80/443) fica exposto; Redis e microsservicos ficam na rede interna.
+# Uso (na raiz do projeto):
+#   docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d --build
+x-service: &service
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # persistencia + limite de memoria. volatile-lru so descarta chaves com validade (cache);
+    # os dispositivos de push e os alertas recentes nao expiram e ficam protegidos.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "volatile-lru"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  geocoding-service:
+    <<: *service
+    build: ../services/geocoding-service
+    environment: [PORT=3001]
+    depends_on: {}
+
+  weather-service:
+    <<: *service
+    build: ../services/weather-service
+    environment: [PORT=3002]
+    depends_on: {}
+
+  air-quality-service:
+    <<: *service
+    build: ../services/air-quality-service
+    environment:
+      - PORT=3003
+      - REDIS_URL=redis://redis:6379
+      - AQI_ALERT_THRESHOLD=${AQI_ALERT_THRESHOLD:-80}
+
+  risk-service:
+    <<: *service
+    build: ../services/risk-service
+    environment: [PORT=3005]
+    depends_on: {}
+
+  geodata-service:
+    <<: *service
+    build: ../services/geodata-service
+    environment:
+      - PORT=3006
+      - REDIS_URL=redis://redis:6379
+      - GFW_API_KEY=${GFW_API_KEY:-}
+      - GFW_ORIGIN=${GFW_ORIGIN:-http://localhost}
+
+  traffic-service:
+    <<: *service
+    build: ../services/traffic-service
+    environment:
+      - PORT=3008
+      - REDIS_URL=redis://redis:6379
+      - TOMTOM_API_KEY=${TOMTOM_API_KEY:-}
+
+  alert-service:
+    <<: *service
+    build: ../services/alert-service
+    environment:
+      - PORT=3004
+      - REDIS_URL=redis://redis:6379
+      - RISK_SERVICE_URL=http://risk-service:3005
+      - AIR_QUALITY_SERVICE_URL=http://air-quality-service:3003
+      - TRAFFIC_SERVICE_URL=http://traffic-service:3008
+      - GEODATA_SERVICE_URL=http://geodata-service:3006
+      - WEATHER_SERVICE_URL=http://weather-service:3002
+      - MONITOR_LOCATIONS=${MONITOR_LOCATIONS:-}
+      - MONITOR_INTERVAL_SECONDS=${MONITOR_INTERVAL_SECONDS:-900}
+      - AQI_ALERT_THRESHOLD=${AQI_ALERT_THRESHOLD:-80}
+
+  push-service:
+    <<: *service
+    build: ../services/push-service
+    environment:
+      - PORT=3009
+      - REDIS_URL=redis://redis:6379
+      - FCM_SERVICE_ACCOUNT_B64=${FCM_SERVICE_ACCOUNT_B64:-}
+
+  api-gateway:
+    <<: *service
+    build: ../services/api-gateway
+    environment:
+      - PORT=3000
+      - REDIS_URL=redis://redis:6379
+      - GEOCODING_SERVICE_URL=http://geocoding-service:3001
+      - WEATHER_SERVICE_URL=http://weather-service:3002
+      - AIR_QUALITY_SERVICE_URL=http://air-quality-service:3003
+      - ALERT_SERVICE_URL=http://alert-service:3004
+      - RISK_SERVICE_URL=http://risk-service:3005
+      - GEODATA_SERVICE_URL=http://geodata-service:3006
+      - TRAFFIC_SERVICE_URL=http://traffic-service:3008
+      - PUSH_SERVICE_URL=http://push-service:3009
+      - CACHE_TTL_SECONDS=300
+      - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY:-}
+      - TOMTOM_API_KEY=${TOMTOM_API_KEY:-}
+      - DEFORESTATION_TILES_URL=${DEFORESTATION_TILES_URL:-}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      - DOMAIN=${DOMAIN:?defina DOMAIN em deploy/.env (ex.: respira.exemplo.com, ou :80 para testar sem dominio)}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../client:/srv/client:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+
+volumes:
+  redisdata:
+  caddy_data:
+  caddy_config:

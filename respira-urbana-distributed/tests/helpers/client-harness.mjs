@@ -62,9 +62,23 @@ globalThis.fetch = async (url) => {
   if (p === '/api/watersheds') return J({ features: [{ kind: 'water', name: 'Represa', rings: [{ closed: true, points: [[0, 0], [1, 1], [0, 1]] }] }] });
   if (p === '/api/traffic/incidents') return J({ total: 2, major: 1, roadClosures: 0, totalDelaySec: 600, byCategory: { Acidente: 1, Obras: 1 },
     items: [{ categoryLabel: 'Acidente', category: 1, severity: 3, severityLabel: 'grave', from: 'A', to: 'B', description: 'Colisão', lat: -22.85, lon: -48.4 }] });
-  if (p === '/api/alerts') return J({ alerts: [{ kind: 'flood', level: 'alta', lat: -22.88, lon: -48.44, title: 'Risco muito alto de alagamento', detail: 'Botucatu', ts: Date.now() - 600000 }] });
+  if (p === '/api/alerts') return J({ alerts: [
+    { kind: 'flood', level: 'alta', lat: -22.88, lon: -48.44, title: 'Risco muito alto de alagamento', detail: 'Botucatu', ts: Date.now() - 600000 },
+    { kind: 'heat', level: 'media', lat: -22.9, lon: -48.45, title: 'Calor extremo: sensação de 39 °C', detail: 'Botucatu', ts: Date.now() - 300000 },
+    { kind: 'wind', level: 'media', lat: -22.95, lon: -48.5, title: 'Ventos fortes: rajadas de 65 km/h', detail: 'Botucatu', ts: Date.now() - 300000 },
+    { kind: 'transit', level: 'alta', lat: -22.87, lon: -48.43, title: 'Transporte público: Estação de metrô Sé com via interditada por perto', detail: 'Botucatu', ts: Date.now() - 200000 }] });
+  if (p === '/api/manancial/watch') return J({ available: true, days: 30, areas: [
+    { name: 'Represa Teste', kind: 'water', alerts: 14, confirmed: 8, cells: [{ lat: -22.85, lon: -48.45, count: 9, confirmed: 5 }, { lat: -22.86, lon: -48.46, count: 5, confirmed: 3 }, { lat: -22.87, lon: -48.47, count: 1, confirmed: 0 }] },
+    { name: 'Parque Limpo', kind: 'protected', alerts: 0, confirmed: 0, cells: [] }] });
   if (p === '/api/monitor') return J({ updatedAt: Date.now(), locations: [{ name: 'Botucatu', lat: -22.88, lon: -48.44, aqi: 32, flood: { level: 'muito_alto' }, inversion: { level: 'forte' } }] });
+  if (p === '/api/forest/alerts' && globalThis.__geo === 'off') return J({ available: false, reason: 'no-key' });
+  if (p === '/api/point' && globalThis.__geo === 'fail') return J({ error: 'servicos indisponiveis' }, 502);
+  if (p === '/api/point' && globalThis.__geo === 'off') return J({ manancial: { status: 'outside', areas: [], nearest: null }, forest: { available: false, reason: 'no-key' }, status: {} });
+  if (p === '/api/forest/alerts') return J({ available: true, days: 30, total: 12, confirmed: 5, cells: [{ lat: -22.9, lon: -48.4, count: 12, confirmed: 5, latest: '2026-10-28' }] });
   if (p === '/api/point') return J({
+    transit: { count: 1, stops: [{ name: 'Estação Sé', kind: 'metro', distanceKm: 0.35 }] },
+    manancial: { status: 'inside', areas: [{ name: 'Represa Teste', kind: 'water', distanceKm: 0, inside: true }] },
+    forest: { available: true, days: 30, total: 12, confirmed: 5 },
     weather: { current: { temperature_2m: 23, weather_code: 3 }, precipitationProbability: 40 },
     air: { current: { european_aqi: 45 } }, flood: { level: 'alto', rain: { next24hMm: 62.4 } },
     inversion: { available: true, next24h: { level: 'forte', maxStrength: 3.4 } },
@@ -112,9 +126,27 @@ assert.match(els.mapLegend.innerHTML, /Desmatamento/);
 assert.equal(els.mapLegend.style.display, 'block');
 assert.equal(JSON.parse(localStorage._d['respira:themes']).length, 7);
 
-// focos: chuva (1) + inversao (1) + incidente grave (1) + alerta de alagamento (1)
+// pinos: chuva (1) + inversao (1) + incidente grave (1) + alerta de alagamento (1) + desmatamento recente (1)
+//         + calor, camada de temperatura ativa (1) + alerta de transporte publico (1) + mananciais com desmatamento (2 celulas)
+// o alerta de vento nao aparece: a camada de vento nao esta ativa
 const liveMarkers = [...log.added].filter((g) => g._on && g.items).reduce((n, g) => n + g.items.filter((i) => i.isMarker).length, 0);
-assert.equal(liveMarkers, 4);
+assert.equal(liveMarkers, 9);
+assert.ok(calls.some((u) => u.includes('/api/manancial/watch') && u.includes('radiusKm=')));
+assert.ok(calls.some((u) => u.includes('/api/forest/alerts') && u.includes('days=30')));
+
+// trocar a camada de clima troca os pinos de alerta: sai o calor, entra o vento
+const countPins = () => [...log.added].filter((g) => g._on && g.items).reduce((n, g) => n + g.items.filter((i) => i.isMarker).length, 0);
+const layerClick = (key) => filters.fire('click', { target: { closest: (q) => (q.includes('data-layer') ? { dataset: { layer: key } } : null) } });
+layerClick('wind_new');
+await tick(50);
+assert.equal(countPins(), 9);                       // -1 calor, +1 vento
+assert.match(els.mapLegend.innerHTML, /alertas ativos de calor, frio, vento ou tempestade/);
+layerClick('clouds_new');
+await tick(50);
+assert.equal(countPins(), 8);                       // nuvens nao tem alerta
+layerClick('temp_new');
+await tick(50);
+assert.equal(countPins(), 9);
 
 // clique no mapa: o pop-up mostra o clima E os temas ligados (regressao: aparecia vazio)
 log.map._h.click({ latlng: { wrap: () => ({ lat: -22.9, lng: -48.4 }), lat: -22.9, lng: -48.4 } });
@@ -127,7 +159,15 @@ assert.match(log.popup.c, /Alagamento/);
 assert.match(log.popup.c, /Inversão térmica/);
 assert.match(log.popup.c, /Trânsito/);
 assert.doesNotMatch(log.popup.c, /—<\/dd>.*—<\/dd>.*—<\/dd>/s);
-assert.ok(calls.some((u) => u.includes('/api/point') && u.includes('include=weather,air,flood,inversion,traffic')));
+assert.ok(calls.some((u) => u.includes('/api/point') && u.includes('weather') && u.includes('air') && u.includes('traffic')));
+// mananciais e desmatamento tambem entram no pop-up (e na consulta) quando os temas estao ligados
+assert.ok(calls.some((u) => u.includes('/api/point') && /include=[^&]*manancial/.test(u) && /include=[^&]*forest/.test(u)));
+assert.match(log.popup.c, /Manancial/);
+assert.match(log.popup.c, /⚠️ Dentro de Represa Teste \(represa\/lago\)/);
+assert.match(log.popup.c, /Transporte público/);
+assert.match(log.popup.c, /Estação Sé \(metrô\) · 350 m/);
+assert.match(log.popup.c, /Desmatamento/);
+assert.match(log.popup.c, /12 alertas em 30 dias \(10 km\) · 5 confirmados/);
 
 // consultas incluem so os temas ativos
 const gridCalls = calls.filter((u) => u.includes('/api/grid/'));
@@ -139,6 +179,12 @@ const city = els.monitorList;
 city.fire('click', { target: { closest: () => ({ dataset: { lat: '-22.88', lon: '-48.44', name: 'Botucatu' } }) } });
 await tick(100);
 assert.match(els.main.innerHTML, /Alagamento e inundação/);
+assert.match(els.main.innerHTML, /id="geoCard"/);
+assert.match(els.geoCard.innerHTML, /Área de manancial/);
+assert.match(els.geoCard.innerHTML, /Dentro/);
+assert.match(els.geoCard.innerHTML, /dentro de Represa Teste/);
+assert.match(els.geoCard.innerHTML, /Desmatamento \(30 dias, 10 km\)/);
+assert.match(els.geoCard.innerHTML, /12 alertas em 30 dias/);
 assert.match(els.main.innerHTML, /Muito alto/);
 assert.match(els.main.innerHTML, /Pico às 02:00/);
 assert.match(els.main.innerHTML, /reter poluentes/);
@@ -146,6 +192,24 @@ assert.match(els.main.innerHTML, /24 km\/h agora/);
 assert.equal(els.dotRisks.className, 'dot ok');
 assert.equal(els.dotTraffic.className, 'dot ok');
 assert.ok(calls.some((u) => u.includes('/api/environment') && u.includes('lat=-22.88')));
+
+// sem a chave do GFW: o card avisa, o mapa continua e a legenda explica; ponto fora de manancial
+globalThis.__geo = 'off';
+city.fire('click', { target: { closest: () => ({ dataset: { lat: '-22.88', lon: '-48.44', name: 'Botucatu' } }) } });
+await tick(120);
+assert.match(els.geoCard.innerHTML, /Fora/);
+assert.match(els.geoCard.innerHTML, /sem chave GFW/);
+assert.match(els.geoCard.innerHTML, /chave do Global Forest Watch/);
+log.map._h.moveend && log.map._h.moveend();
+await tick(900);
+assert.match(els.mapLegend.innerHTML, /ainda não tem a chave do GFW/);
+// falha do servico: o resumo do local continua e o card so avisa
+globalThis.__geo = 'fail';
+city.fire('click', { target: { closest: () => ({ dataset: { lat: '-22.88', lon: '-48.44', name: 'Botucatu' } }) } });
+await tick(120);
+assert.match(els.main.innerHTML, /Alagamento e inundação/);
+assert.match(els.geoCard.innerHTML, /Não foi possível verificar agora/);
+globalThis.__geo = 'ok';
 
 // desligar tema remove camada e esconde painel
 click('traffic'); click('air');

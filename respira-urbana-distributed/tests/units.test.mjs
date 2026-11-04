@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { snapGrid } from '../services/api-gateway/src/grid.js';
 import { parseGridParams } from '../services/risk-service/src/grid.js';
 import { buildAlert, buildMonitorAlerts, parseLocations, summarizeLocation, DEFAULT_LOCATIONS } from '../services/alert-service/src/alerts.js';
+import { validateRegistration, shouldReceive, distanceKm, buildMessage } from '../services/push-service/src/targeting.js';
+import { loadServiceAccount, signJwt, createFcm, isDeadToken } from '../services/push-service/src/fcm.js';
+import crypto from 'node:crypto';
 import { parseIncidents, parseFlow, classifyFlow, isTileCoord, tileUrl, incidentsUrl } from '../services/traffic-service/src/tomtom.js';
 
 test('snapGrid: alinha a grade e limita o numero de celulas', () => {
@@ -83,4 +86,65 @@ test('TomTom: URLs, tiles, incidentes e fluxo', () => {
   assert.equal(classifyFlow(0.9, true).level, 'interditada');
   const f = parseFlow({ flowSegmentData: { currentSpeed: 10, freeFlowSpeed: 40 } });
   assert.equal(f.ratio, 0.25); assert.equal(f.level, 'intenso');
+});
+
+test('push: validateRegistration valida, arredonda a posicao e aplica padroes', () => {
+  const t = 'a'.repeat(30);
+  const r = validateRegistration({ token: t, lat: -22.8849, lon: -48.4412, platform: 'android' });
+  assert.equal(r.ok, true);
+  assert.deepEqual([r.value.lat, r.value.lon, r.value.radiusKm, r.value.minLevel, r.value.kinds], [-22.88, -48.44, 100, 'media', null]);
+  assert.equal(validateRegistration({ token: t }).value.lat, null);
+  for (const bad of [null, {}, { token: 'a b '.repeat(10) }, { token: t, minLevel: 'x' }, { token: t, lat: 1 }, { token: t, lat: 1, lon: 1, radiusKm: 1 },
+    { token: t, kinds: [] }, { token: t, kinds: ['foo'] }]) assert.equal(validateRegistration(bad).ok, false, JSON.stringify(bad));
+});
+
+test('push: shouldReceive combina nivel, tipo e distancia', () => {
+  assert.ok(Math.abs(distanceKm(-23.55, -46.63, -22.91, -43.17) - 360) < 15);   // Sao Paulo - Rio
+  const alert = { kind: 'flood', level: 'media', lat: -23.55, lon: -46.63 };
+  assert.equal(shouldReceive({ minLevel: 'media' }, alert), true);                       // sem posicao: tudo
+  assert.equal(shouldReceive({ minLevel: 'alta' }, alert), false);
+  assert.equal(shouldReceive({ minLevel: 'media', kinds: ['traffic'] }, alert), false);
+  assert.equal(shouldReceive({ minLevel: 'media', lat: -23.5, lon: -46.6, radiusKm: 50 }, alert), true);
+  assert.equal(shouldReceive({ minLevel: 'media', lat: -22.91, lon: -43.17, radiusKm: 100 }, alert), false);
+  assert.equal(shouldReceive({ minLevel: 'media', lat: 0, lon: 0 }, { kind: 'flood', level: 'alta' }), false);   // alerta sem posicao nao cabe em area
+  const m = buildMessage('tok', { ...alert, title: 'T', detail: 'Cidade', id: 7 });
+  assert.equal(m.message.data.alertId, '7'); assert.equal(m.message.android.priority, 'NORMAL');
+  assert.equal(buildMessage('tok', { ...alert, level: 'alta', title: 'T' }).message.android.priority, 'HIGH');
+});
+
+test('push: FCM — conta de servico, JWT RS256 assinado e envio', async () => {
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
+  const json = JSON.stringify({ project_id: 'p', client_email: 'e@p.iam', private_key: privateKey });
+  const sa = loadServiceAccount({ FCM_SERVICE_ACCOUNT_B64: Buffer.from(json).toString('base64') });
+  assert.equal(sa.projectId, 'p');
+  assert.equal(loadServiceAccount({ FCM_SERVICE_ACCOUNT_JSON: json }).clientEmail, 'e@p.iam');
+  assert.equal(loadServiceAccount({}), null);
+  assert.equal(loadServiceAccount({ FCM_SERVICE_ACCOUNT_JSON: '{}' }), null);
+  assert.equal(loadServiceAccount({ FCM_SERVICE_ACCOUNT_B64: 'lixo' }), null);
+
+  const jwt = signJwt(sa, 1000);
+  const [h, c, sig] = jwt.split('.');
+  assert.deepEqual(JSON.parse(Buffer.from(h, 'base64url')), { alg: 'RS256', typ: 'JWT' });
+  const claims = JSON.parse(Buffer.from(c, 'base64url'));
+  assert.deepEqual([claims.iss, claims.iat, claims.exp, claims.scope], ['e@p.iam', 1000, 4600, 'https://www.googleapis.com/auth/firebase.messaging']);
+  assert.ok(crypto.createVerify('RSA-SHA256').update(`${h}.${c}`).verify(publicKey, Buffer.from(sig, 'base64url')));
+
+  // o token OAuth e reaproveitado; 404 UNREGISTERED marca o token como morto; erro de rede nao
+  let oauth = 0;
+  const f = async (url, opts) => {
+    if (String(url).includes('oauth2')) { oauth++; return { ok: true, json: async () => ({ access_token: 'T', expires_in: 3600 }) }; }
+    const tok = JSON.parse(opts.body).message.token;
+    if (tok === 'rede') throw new Error('timeout');
+    if (tok === 'morto') return { ok: false, status: 404, json: async () => ({ error: { status: 'NOT_FOUND', details: [{ errorCode: 'UNREGISTERED' }] } }) };
+    return { ok: true, json: async () => ({}) };
+  };
+  const fcm = createFcm(sa, f);
+  assert.deepEqual(await fcm.send({ message: { token: 'ok' } }), { ok: true });
+  assert.equal((await fcm.send({ message: { token: 'morto' } })).dead, true);
+  const net = await fcm.send({ message: { token: 'rede' } });
+  assert.equal(net.ok, false); assert.equal(net.dead, false);
+  assert.equal(oauth, 1);
+  assert.equal(isDeadToken(400, { error: { status: 'INVALID_ARGUMENT', message: 'The registration token is not a valid FCM registration token' } }), true);
+  assert.equal(isDeadToken(400, { error: { status: 'INVALID_ARGUMENT', message: 'Invalid JSON payload' } }), false);
+  assert.equal(isDeadToken(500, {}), false);
 });

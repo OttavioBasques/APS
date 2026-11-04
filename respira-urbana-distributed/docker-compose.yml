@@ -2,6 +2,9 @@ services:
   redis:
     image: redis:7-alpine
     container_name: respira-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
     ports:
       - "6379:6379"
     healthcheck:
@@ -13,9 +16,10 @@ services:
   geocoding-service:
     build: ./services/geocoding-service
     container_name: respira-geocoding
-    command: npm run dev
+    command: ["node", "/dev-runner.mjs", "src/index.js"]
     volumes:
       - ./services/geocoding-service/src:/app/src
+      - ./scripts/dev-runner.mjs:/dev-runner.mjs:ro
     environment:
       - PORT=3001
     ports:
@@ -29,9 +33,10 @@ services:
   weather-service:
     build: ./services/weather-service
     container_name: respira-weather
-    command: npm run dev
+    command: ["node", "/dev-runner.mjs", "src/index.js"]
     volumes:
       - ./services/weather-service/src:/app/src
+      - ./scripts/dev-runner.mjs:/dev-runner.mjs:ro
     environment:
       - PORT=3002
     ports:
@@ -45,9 +50,10 @@ services:
   air-quality-service:
     build: ./services/air-quality-service
     container_name: respira-air-quality
-    command: npm run dev
+    command: ["node", "/dev-runner.mjs", "src/index.js"]
     volumes:
       - ./services/air-quality-service/src:/app/src
+      - ./scripts/dev-runner.mjs:/dev-runner.mjs:ro
     environment:
       - PORT=3003
       - REDIS_URL=redis://redis:6379
@@ -66,9 +72,10 @@ services:
   risk-service:
     build: ./services/risk-service
     container_name: respira-risk
-    command: npm run dev
+    command: ["node", "/dev-runner.mjs", "src/index.js"]
     volumes:
       - ./services/risk-service/src:/app/src
+      - ./scripts/dev-runner.mjs:/dev-runner.mjs:ro
     environment:
       - PORT=3005
     ports:
@@ -82,12 +89,15 @@ services:
   geodata-service:
     build: ./services/geodata-service
     container_name: respira-geodata
-    command: npm run dev
+    command: ["node", "/dev-runner.mjs", "src/index.js"]
     volumes:
       - ./services/geodata-service/src:/app/src
+      - ./scripts/dev-runner.mjs:/dev-runner.mjs:ro
     environment:
       - PORT=3006
       - REDIS_URL=redis://redis:6379
+      - GFW_API_KEY=${GFW_API_KEY:-}
+      - GFW_ORIGIN=${GFW_ORIGIN:-http://localhost}
     depends_on:
       redis:
         condition: service_healthy
@@ -102,15 +112,18 @@ services:
   alert-service:
     build: ./services/alert-service
     container_name: respira-alerts
-    command: npm run dev
+    command: ["node", "/dev-runner.mjs", "src/index.js"]
     volumes:
       - ./services/alert-service/src:/app/src
+      - ./scripts/dev-runner.mjs:/dev-runner.mjs:ro
     environment:
       - REDIS_URL=redis://redis:6379
       - PORT=3004
       - RISK_SERVICE_URL=http://risk-service:3005
       - AIR_QUALITY_SERVICE_URL=http://air-quality-service:3003
       - TRAFFIC_SERVICE_URL=http://traffic-service:3008
+      - GEODATA_SERVICE_URL=http://geodata-service:3006
+      - WEATHER_SERVICE_URL=http://weather-service:3002
       - MONITOR_LOCATIONS=${MONITOR_LOCATIONS:-}
       - MONITOR_INTERVAL_SECONDS=${MONITOR_INTERVAL_SECONDS:-900}
       - AQI_ALERT_THRESHOLD=${AQI_ALERT_THRESHOLD:-80}
@@ -128,9 +141,10 @@ services:
   traffic-service:
     build: ./services/traffic-service
     container_name: respira-traffic
-    command: npm run dev
+    command: ["node", "/dev-runner.mjs", "src/index.js"]
     volumes:
       - ./services/traffic-service/src:/app/src
+      - ./scripts/dev-runner.mjs:/dev-runner.mjs:ro
     environment:
       - PORT=3008
       - REDIS_URL=redis://redis:6379
@@ -146,12 +160,35 @@ services:
       timeout: 3s
       retries: 3
 
+  push-service:
+    build: ./services/push-service
+    container_name: respira-push
+    command: ["node", "/dev-runner.mjs", "src/index.js"]
+    volumes:
+      - ./services/push-service/src:/app/src
+      - ./scripts/dev-runner.mjs:/dev-runner.mjs:ro
+    environment:
+      - PORT=3009
+      - REDIS_URL=redis://redis:6379
+      - FCM_SERVICE_ACCOUNT_B64=${FCM_SERVICE_ACCOUNT_B64:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "3009:3009"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3009/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
   api-gateway:
     build: ./services/api-gateway
     container_name: respira-gateway
-    command: npm run dev
+    command: ["node", "/dev-runner.mjs", "src/index.js"]
     volumes:
       - ./services/api-gateway/src:/app/src
+      - ./scripts/dev-runner.mjs:/dev-runner.mjs:ro
     environment:
       - PORT=3000
       - REDIS_URL=redis://redis:6379
@@ -162,6 +199,7 @@ services:
       - RISK_SERVICE_URL=http://risk-service:3005
       - GEODATA_SERVICE_URL=http://geodata-service:3006
       - TRAFFIC_SERVICE_URL=http://traffic-service:3008
+      - PUSH_SERVICE_URL=http://push-service:3009
       - CACHE_TTL_SECONDS=300
       - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY:-}
       - TOMTOM_API_KEY=${TOMTOM_API_KEY:-}
@@ -181,6 +219,8 @@ services:
         condition: service_started
       traffic-service:
         condition: service_started
+      push-service:
+        condition: service_started
       alert-service:
         condition: service_started
     ports:
@@ -196,3 +236,6 @@ services:
       - "8080:80"
     depends_on:
       - api-gateway
+
+volumes:
+  redisdata:

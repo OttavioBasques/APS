@@ -32,6 +32,13 @@ function fetchWithTimeout(url, ms) {
 // Mensagem de erro sem a chave (a URL contem "key=...").
 const safe = (msg) => String(msg).replace(/key=[^&\s]+/g, 'key=***');
 
+// Erro com o motivo que a TomTom devolveu (ex.: "Unsupported language parameter"), para o log dizer o que ajustar.
+async function tomtomError(up) {
+  let detail = '';
+  try { detail = (await up.text()).replace(/\s+/g, ' ').slice(0, 300); } catch { /* sem corpo */ }
+  return new Error(`tomtom respondeu ${up.status}${detail ? ': ' + detail : ''}`);
+}
+
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'traffic-service', enabled: Boolean(KEY) }));
 
 app.get('/status', (req, res) => res.json({ enabled: Boolean(KEY), flowStyle, incidentStyle }));
@@ -51,7 +58,7 @@ app.get('/tiles/:kind/:z/:x/:y', async (req, res) => {
   if (hit) { res.set('x-cache', 'HIT'); return res.status(200).end(Buffer.from(hit, 'base64')); }
   try {
     const up = await fetchWithTimeout(tileUrl(kind, style, z, x, y, KEY), 8000);
-    if (!up.ok) throw new Error(`tomtom respondeu ${up.status}`);
+    if (!up.ok) throw await tomtomError(up);
     const buf = Buffer.from(await up.arrayBuffer());
     await cacheSet(ck, buf.toString('base64'), TILE_TTL);
     res.set('x-cache', 'MISS');
@@ -79,13 +86,14 @@ app.get('/incidents', async (req, res) => {
   const parsed = parseBBox(req.query, 0.8);   // a TomTom limita a area da consulta
   if (parsed.error) return res.status(parsed.status || 400).json({ error: parsed.error });
   const { bbox } = parsed;
-  const ck = `traffic:inc:${bbox.south},${bbox.west},${bbox.north},${bbox.east}`;
+  const max = Math.min(300, Math.max(10, Math.round(Number(req.query.max)) || 40));   // o alert-service pede mais, para nao perder interdicoes
+  const ck = `traffic:inc:${bbox.south},${bbox.west},${bbox.north},${bbox.east}:${max}`;
   const hit = await cacheGet(ck);
   if (hit) return res.json({ ...JSON.parse(hit), source: 'cache' });
   try {
     const up = await fetchWithTimeout(incidentsUrl(bbox, KEY), 10000);
-    if (!up.ok) throw new Error(`tomtom respondeu ${up.status}`);
-    const payload = { enabled: true, ...parseIncidents(await up.json()) };
+    if (!up.ok) throw await tomtomError(up);
+    const payload = { enabled: true, ...parseIncidents(await up.json(), max) };
     await cacheSet(ck, JSON.stringify(payload), DATA_TTL);
     res.json({ ...payload, source: 'live' });
   } catch (err) {
@@ -108,7 +116,7 @@ app.get('/flow', async (req, res) => {
     const up = await fetchWithTimeout(flowUrl(lat.toFixed(5), lon.toFixed(5), KEY), 8000);
     // 400 = sem via mapeada perto do ponto (comum fora de cidades): nao e falha
     if (up.status === 400 || up.status === 404) return res.json({ enabled: true, available: false });
-    if (!up.ok) throw new Error(`tomtom respondeu ${up.status}`);
+    if (!up.ok) throw await tomtomError(up);
     const payload = { enabled: true, ...parseFlow(await up.json()) };
     await cacheSet(ck, JSON.stringify(payload), DATA_TTL);
     res.json({ ...payload, source: 'live' });

@@ -52,6 +52,29 @@ Atalhos: `npm run run:device` (compila e instala no aparelho/emulador conectado)
 
 O endereço fica salvo no aparelho. Para um servidor publicado na internet, use o endereço com `https://`.
 
+## Notificações push (Firebase)
+
+O servidor envia os alertas pelo **Firebase Cloud Messaging (FCM)**. Configuração única (gratuita):
+
+1. Em [console.firebase.google.com](https://console.firebase.google.com) crie um projeto (pode desativar o Analytics).
+2. **Adicionar app → Android**, com o nome do pacote **`br.respiraurbana.app`**. Baixe o **`google-services.json`** e coloque em
+   `mobile/android/app/google-services.json` (a pasta `android/` existe depois de `npm run setup`). O arquivo é ignorado pelo Git.
+3. Ainda no Firebase: **Configurações do projeto → Contas de serviço → Gerar nova chave privada**. Salve o `.json` **fora do Git**.
+4. Converta a chave para o `.env` do servidor e cole a linha gerada em `.env` (e em `deploy/.env` na VPS):
+   ```bash
+   node scripts/fcm-env.mjs caminho/para/chave.json
+   # FCM_SERVICE_ACCOUNT_B64=eyJ0eXBl...
+   ```
+5. Reinicie o servidor (`docker-compose up -d --build`) e rode `npm run sync` no `mobile/` e execute o app de novo
+   (o `npm install` já traz o plugin `@capacitor/push-notifications`).
+6. No app: ⚙️ → **Receber alertas no celular**. Escolha **Nível** (todos / só os graves) e **Área** (todas as cidades
+   monitoradas / perto de mim, 100 km). O Android 13+ pede a permissão de notificações.
+
+Como funciona: o `alert-service` publica cada alerta novo; o `push-service` escolhe os aparelhos pelo nível, tipo e distância
+e envia via FCM. Tocar na notificação abre o local do alerta no mapa; com o app aberto, o aviso aparece como faixa no topo.
+Aparelhos com token inválido são removidos automaticamente. O servidor guarda a posição **arredondada (~1 km)** e só
+quando você escolhe "perto de mim". Sem a chave do FCM no servidor, o app avisa que as notificações não estão configuradas.
+
 ## Observações
 
 - O app usa tráfego `http` (o gateway local não tem HTTPS); por isso o manifesto recebe

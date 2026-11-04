@@ -61,7 +61,8 @@ test('mobile: build-web injeta mobile.js sem alterar o client', () => {
 
 test('mobile: o client web continua usando ?gateway= e o padrao local', () => {
   const html = fs.readFileSync(path.join(root, 'client/index.html'), 'utf8');
-  assert.match(html, /params\.get\('gateway'\) \|\| window\.RESPIRA_GATEWAY \|\| 'http:\/\/localhost:3000'/);
+  assert.match(html, /params\.get\('gateway'\) \|\| window\.RESPIRA_GATEWAY \|\| SAME_ORIGIN \|\| 'http:\/\/localhost:3000'/);
+  assert.match(html, /window\.location\.port === '' && !window\.Capacitor/);    // app Android nunca usa a origem http://localhost
 });
 
 test('mobile: patchManifest libera http e garante permissoes (idempotente)', () => {
@@ -110,4 +111,91 @@ test('mobile: no app nativo sem servidor salvo abre a configuracao e adiciona a 
   // no navegador comum (web) nada disso e ativado
   const web = loadMobile({ document: { ...document, body: mkEl() }, location: { search: '' }, localStorage: { getItem: () => null }, Capacitor: undefined });
   assert.equal(web.RespiraMobile.isNative(), false);
+});
+
+function pushEnv({ permission = 'granted', gateway = 'http://srv:3000', registerStatus = 201, position } = {}) {
+  const store = { 'respira:gateway': gateway };
+  const localStorage = { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = v; }, removeItem: (k) => { delete store[k]; } };
+  const listeners = {}; const calls = []; const fetched = [];
+  const P = {
+    requestPermissions: async () => ({ receive: permission }),
+    createChannel: async (c) => { calls.push(['channel', c]); },
+    addListener: (ev, fn) => { listeners[ev] = fn; },
+    register: async () => { setImmediate(() => listeners.registration({ value: 'TOKEN-' + 'x'.repeat(30) })); },
+    unregister: async () => { calls.push(['unregister']); }
+  };
+  const went = [];
+  const win = loadMobile({
+    localStorage,
+    fetch: async (url, init) => { fetched.push([url, JSON.parse(init.body)]); return { ok: registerStatus < 400, status: registerStatus, json: async () => ({ ok: true }) }; },
+    respiraGo: (...a) => went.push(a),
+    Capacitor: { isNativePlatform: () => true, Plugins: { PushNotifications: P, ...(position ? { Geolocation: { getCurrentPosition: async () => ({ coords: position }) } } : {}) } }
+  });
+  const status = [];
+  win.RespiraMobile.onPushStatus((m, ok) => status.push([m, ok]));
+  return { win, api: win.RespiraMobile, store, listeners, calls, fetched, went, status };
+}
+const plain = (o) => JSON.parse(JSON.stringify(o));   // objetos criados no vm tem outro prototipo
+const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
+
+test('mobile push: preferencias com padroes e corpo do cadastro', () => {
+  const { api, store } = pushEnv();
+  assert.deepEqual(plain(api.pushPrefs()), { enabled: false, minLevel: 'media', scope: 'all' });
+  api.savePushPrefs({ enabled: true, minLevel: 'alta', scope: 'near' });
+  assert.deepEqual(plain(api.pushPrefs()), { enabled: true, minLevel: 'alta', scope: 'near' });
+  store['respira:push'] = '{lixo';
+  assert.equal(api.pushPrefs().enabled, false);
+  const tok = 'T'.repeat(30);
+  assert.deepEqual(plain(api.buildRegistration({ minLevel: 'alta', scope: 'all' }, tok, { lat: 1, lon: 2 })), { token: tok, platform: 'android', minLevel: 'alta' });
+  assert.deepEqual(plain(api.buildRegistration({ minLevel: 'media', scope: 'near' }, tok, { lat: -22.9, lon: -48.4 })),
+    { token: tok, platform: 'android', minLevel: 'media', lat: -22.9, lon: -48.4, radiusKm: 100 });
+  assert.equal(api.buildRegistration({ minLevel: 'media', scope: 'near' }, tok, null).lat, undefined);   // sem GPS: todas as cidades
+});
+
+test('mobile push: ligar pede permissao, cria canal e cadastra o token no servidor', async () => {
+  const e = pushEnv({ position: { latitude: -22.88, longitude: -48.44 } });
+  e.api.savePushPrefs({ enabled: true, minLevel: 'alta', scope: 'near' });
+  const r = await e.api.enablePush();
+  assert.equal(r.ok, true);
+  await tick();
+  assert.equal(e.calls[0][1].id, 'alerts');
+  assert.equal(e.fetched.length, 1);
+  assert.equal(e.fetched[0][0], 'http://srv:3000/api/push/register');
+  assert.deepEqual(e.fetched[0][1], { token: 'TOKEN-' + 'x'.repeat(30), platform: 'android', minLevel: 'alta', lat: -22.88, lon: -48.44, radiusKm: 100 });
+  assert.equal(e.store['respira:pushToken'], 'TOKEN-' + 'x'.repeat(30));
+  assert.deepEqual(plain(e.status.at(-1)), ['Notificações ativas neste aparelho.', true]);
+
+  // tocar na notificacao abre o local do alerta
+  e.listeners.pushNotificationActionPerformed({ notification: { data: { lat: '-34', lon: '-71', place: 'Valparaiso' } } });
+  assert.deepEqual(plain(e.went[0]), [-34, -71, 'Valparaiso']);
+  e.listeners.pushNotificationActionPerformed({ notification: { data: { lat: '', lon: '' } } });   // alerta sem posicao
+  assert.equal(e.went.length, 1);
+
+  // desligar descadastra no servidor e esquece o token
+  const off = await e.api.disablePush();
+  assert.equal(off.ok, true);
+  assert.equal(e.fetched.at(-1)[0], 'http://srv:3000/api/push/unregister');
+  assert.equal(e.store['respira:pushToken'], undefined);
+  assert.ok(e.calls.some((c) => c[0] === 'unregister'));
+});
+
+test('mobile push: permissao negada, sem servidor e FCM nao configurado no servidor', async () => {
+  const denied = pushEnv({ permission: 'denied' });
+  const d = await denied.api.enablePush();
+  assert.equal(d.ok, false); assert.match(d.message, /Permissão negada/);
+  assert.equal(denied.fetched.length, 0);
+
+  const noServer = pushEnv({ gateway: '' });
+  noServer.store['respira:gateway'] = '';
+  assert.match((await noServer.api.enablePush()).message, /servidor/);
+
+  const off = pushEnv({ registerStatus: 503 });
+  await off.api.enablePush(); await tick();
+  assert.equal(off.status.at(-1)[1], false);
+  assert.match(off.status.at(-1)[0], /FCM/);
+
+  const failed = pushEnv();
+  await failed.api.enablePush();
+  failed.listeners.registrationError({ error: 'SERVICE_NOT_AVAILABLE' });
+  assert.match(failed.status.at(-1)[0], /google-services\.json/);
 });

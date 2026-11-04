@@ -1,0 +1,26 @@
+# HTTPS automatico (Let's Encrypt) para o dominio em DOMAIN.
+# DOMAIN=:80 serve so em HTTP (teste por IP, sem dominio).
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	# API e saude: gateway na rede interna
+	handle /api/* {
+		reverse_proxy api-gateway:3000
+	}
+	handle /health {
+		reverse_proxy api-gateway:3000
+	}
+
+	# site (client/index.html)
+	handle {
+		root * /srv/client
+		try_files {path} /index.html
+		file_server
+	}
+}

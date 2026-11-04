@@ -3,8 +3,15 @@ import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
 
 await import('./shims/register.mjs');
-const { installUpstreamMock, upstreamCalls } = await import('./helpers/upstream.mjs');
+const { installUpstreamMock, upstreamCalls, fcmSent, gfwCalls } = await import('./helpers/upstream.mjs');
+const { generateKeyPairSync } = await import('node:crypto');
 installUpstreamMock();
+
+// conta de servico FCM de mentira, com chave RSA real (o push-service assina o JWT de verdade)
+const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
+process.env.FCM_SERVICE_ACCOUNT_B64 = Buffer.from(JSON.stringify({
+  type: 'service_account', project_id: 'teste', client_email: 'push@teste.iam.gserviceaccount.com', private_key: privateKey,
+  token_uri: 'https://oauth2.googleapis.com/token' })).toString('base64');
 
 const GW = 'http://localhost:4000';
 
@@ -21,21 +28,22 @@ before(async () => {
     GEOCODING_SERVICE_URL: 'http://localhost:4001', WEATHER_SERVICE_URL: 'http://localhost:4002',
     AIR_QUALITY_SERVICE_URL: 'http://localhost:4003', ALERT_SERVICE_URL: 'http://localhost:4004',
     RISK_SERVICE_URL: 'http://localhost:4005', GEODATA_SERVICE_URL: 'http://localhost:4006',
-    TRAFFIC_SERVICE_URL: 'http://localhost:4008'
+    TRAFFIC_SERVICE_URL: 'http://localhost:4008', PUSH_SERVICE_URL: 'http://localhost:4009'
   });
   await start('geocoding-service', { PORT: '4001' });
   await start('weather-service', { PORT: '4002' });
   await start('air-quality-service', { PORT: '4003' });
   await start('alert-service', { PORT: '4004' });
   await start('risk-service', { PORT: '4005' });
-  await start('geodata-service', { PORT: '4006' });
+  await start('geodata-service', { PORT: '4006', GFW_API_KEY: 'gfw-teste', GFW_ORIGIN: 'http://localhost' });
   await start('traffic-service', { PORT: '4008' });
+  await start('push-service', { PORT: '4009' });
   await start('api-gateway', { PORT: '4000' });
   await new Promise((r) => setTimeout(r, 300));
 });
 
-const call = async (method, path) => {
-  const res = await fetch(GW + path, { method });
+const call = async (method, path, body) => {
+  const res = await fetch(GW + path, { method, headers: body === undefined ? {} : { 'content-type': 'application/json' }, body: body === undefined ? undefined : (typeof body === 'string' ? body : JSON.stringify(body)) });
   let data = null;
   try { data = await res.json(); } catch { /* sem corpo */ }
   return { status: res.status, data, headers: res.headers };
@@ -52,7 +60,7 @@ const waitFor = async (fn, ms = 1500) => {
 
 test('health de todos os servicos', async () => {
   for (const [port, name] of [[4000, 'api-gateway'], [4001, 'geocoding-service'], [4002, 'weather-service'], [4003, 'air-quality-service'],
-    [4004, 'alert-service'], [4005, 'risk-service'], [4006, 'geodata-service'], [4008, 'traffic-service']]) {
+    [4004, 'alert-service'], [4005, 'risk-service'], [4006, 'geodata-service'], [4008, 'traffic-service'], [4009, 'push-service']]) {
     const r = await fetch(`http://localhost:${port}/health`);
     assert.equal(r.status, 200, name);
     assert.equal((await r.json()).service, name);
@@ -232,4 +240,155 @@ test('monitoramento ativo: alertas de alagamento e inversao + situacao dos locai
   assert.equal(flood.level, 'alta');
   assert.ok(flood.reasons.length > 0);
   assert.ok(feed.some((a) => a.kind === 'air-quality' && a.detail === 'Santiago' && a.level === 'media'));
+});
+
+const TOK = (n) => `${n}-`.padEnd(40, 'x');
+
+test('push: cadastro validado, status e descadastro', async () => {
+  const st = await call('GET', '/api/push/status');
+  assert.equal(st.data.enabled, true);
+  assert.equal(st.data.devices, 0);
+  const bad = await call('POST', '/api/push/register', { token: 'curto', minLevel: 'urgente', lat: 99, lon: 0 });
+  assert.equal(bad.status, 400);
+  assert.match(bad.data.error, /token/); assert.match(bad.data.error, /minLevel/); assert.match(bad.data.error, /lat/);
+  assert.equal((await call('POST', '/api/push/register', '{nao e json')).status, 400);
+  assert.equal((await call('POST', '/api/push/register', { token: 'x'.repeat(9000) })).status, 413);
+
+  const ok = await call('POST', '/api/push/register', { token: TOK('aparelho-descartavel'), minLevel: 'alta' });
+  assert.equal(ok.status, 201);
+  assert.equal((await call('GET', '/api/push/status')).data.devices, 1);
+  assert.equal((await call('POST', '/api/push/unregister', { token: TOK('aparelho-descartavel') })).status, 200);
+  assert.equal((await call('GET', '/api/push/status')).data.devices, 0);
+  assert.equal((await call('POST', '/api/push/unregister', { token: 'curto' })).status, 400);
+});
+
+test('push: alerta chega so a quem esta na area e no nivel escolhidos; token morto e removido', async () => {
+  const perto = { token: TOK('perto'), lat: -33.9, lon: -70.9, radiusKm: 100, minLevel: 'media', platform: 'android' };
+  const longe = { token: TOK('longe'), lat: -22.88, lon: -48.44, minLevel: 'media' };                 // Botucatu
+  const soAlta = { token: TOK('so-alta-perto'), lat: -33.9, lon: -70.9, minLevel: 'alta' };
+  const semPosicao = { token: TOK('todas-as-cidades'), minLevel: 'media' };
+  const outroTipo = { token: TOK('so-transito'), lat: -33.9, lon: -70.9, kinds: ['traffic'] };
+  const morto = { token: TOK('MORTO'), lat: -33.9, lon: -70.9 };
+  for (const d of [perto, longe, soAlta, semPosicao, outroTipo, morto]) assert.equal((await call('POST', '/api/push/register', d)).status, 201, d.token);
+  assert.equal((await call('GET', '/api/push/status')).data.devices, 6);
+  fcmSent.length = 0;
+
+  await call('GET', '/api/environment?lat=-34&lon=-71&place=Valparaiso');   // IQA 95 -> alerta de nivel "media"
+  const got = await waitFor(async () => (fcmSent.length >= 2 ? fcmSent : null), 3000);
+  await new Promise((r) => setTimeout(r, 200));
+  assert.ok(got, 'nenhuma notificacao enviada');
+  const tokens = fcmSent.map((m) => m.token).sort();
+  assert.deepEqual(tokens, [TOK('perto'), TOK('todas-as-cidades')].sort());
+  const msg = fcmSent.find((m) => m.token === TOK('perto'));
+  assert.match(msg.notification.title, /IQA 95/);
+  assert.match(msg.notification.body, /Valparaiso/);
+  assert.equal(msg.data.kind, 'air-quality');
+  assert.equal(msg.data.lat, '-34');
+  assert.equal(msg.android.notification.channel_id, 'alerts');
+  assert.ok(Object.values(msg.data).every((v) => typeof v === 'string'));
+
+  // o token que o FCM disse nao existir mais foi removido da base
+  const st = await waitFor(async () => { const r = await call('GET', '/api/push/status'); return r.data.devices === 5 ? r.data : null; }, 2000);
+  assert.ok(st, 'token morto nao foi removido');
+});
+
+test('manancial: o ponto esta dentro, perto ou fora de uma represa/area protegida', async () => {
+  // a "Represa Teste" do mock e o triangulo (0,0)-(0,1)-(1,1)
+  const inside = await call('GET', '/api/manancial?lat=0.3&lon=0.9');
+  assert.equal(inside.status, 200);
+  assert.equal(inside.data.status, 'inside');
+  assert.equal(inside.data.areas[0].name, 'Represa Teste');
+  assert.equal(inside.data.areas[0].kind, 'water');
+
+  const outside = await call('GET', '/api/manancial?lat=0.9&lon=0.1');
+  assert.equal(outside.data.status, 'outside');
+  assert.deepEqual(outside.data.areas, []);
+  assert.ok(outside.data.nearest && outside.data.nearest.distanceKm > 1);
+
+  // repetir a consulta usa o cache (nao chama o Overpass de novo)
+  const before = upstreamCalls.length;
+  const again = await call('GET', '/api/manancial?lat=0.3&lon=0.9');
+  assert.equal(again.data.source, 'cache');
+  assert.equal(upstreamCalls.length, before);
+
+  assert.equal((await call('GET', '/api/manancial?lat=abc&lon=1')).status, 400);
+  assert.equal((await call('GET', '/api/manancial')).status, 400);
+});
+
+test('desmatamento: alertas do GFW em volta de um ponto e no retangulo do mapa', async () => {
+  const p = await call('GET', '/api/forest/alerts?lat=0.5&lon=0.8&radiusKm=5&days=30');
+  assert.equal(p.status, 200);
+  assert.equal(p.data.available, true);
+  assert.equal(p.data.total, 10);        // 6 high + 4 nominal; os 3 "low" ficam de fora
+  assert.equal(p.data.confirmed, 6);
+  assert.equal(p.data.days, 30);
+  assert.ok(p.data.cells.length >= 1 && p.data.cells[0].count >= 1);
+
+  // a chave e o Origin chegam ao GFW; a consulta e um poligono com a data inicial na SQL
+  const call0 = gfwCalls.at(-1);
+  assert.equal(call0.headers['x-api-key'], 'gfw-teste');
+  assert.equal(call0.headers.origin, 'http://localhost');
+  assert.equal(call0.body.geometry.type, 'Polygon');
+  assert.match(call0.body.sql, /gfw_integrated_alerts__date >= '\d{4}-\d{2}-\d{2}'/);
+
+  const n = gfwCalls.length;
+  const cached = await call('GET', '/api/forest/alerts?lat=0.5&lon=0.8&radiusKm=5&days=30');
+  assert.equal(cached.data.source, 'cache');
+  assert.equal(gfwCalls.length, n);
+
+  const bbox = await call('GET', '/api/forest/alerts?south=0.4&west=0.7&north=0.6&east=0.9&days=7');
+  assert.equal(bbox.data.available, true);
+  assert.equal((await call('GET', '/api/forest/alerts?south=0&west=0&north=5&east=5')).status, 422);   // mapa muito aberto
+  assert.equal((await call('GET', '/api/forest/alerts')).status, 400);
+});
+
+test('desmatamento em manancial: as areas vigiadas perto do ponto sao consultadas no GFW', async () => {
+  const w = await (await fetch('http://localhost:4006/manancial/watch?lat=0.5&lon=0.8&radiusKm=15&days=30')).json();
+  assert.equal(w.available, true);
+  assert.ok(w.areasChecked >= 1);
+  const rep = w.areas.find((a) => a.name === 'Represa Teste');
+  assert.ok(rep, 'a represa de teste deve ser vigiada');
+  assert.equal(rep.kind, 'water');
+  assert.equal(rep.confirmed, 6);
+  assert.ok(w.totalConfirmed >= 6);
+});
+
+test('/api/point inclui manancial e desmatamento quando pedidos', async () => {
+  const r = await call('GET', '/api/point?lat=0.3&lon=0.9&include=manancial,forest');
+  assert.equal(r.status, 200);
+  assert.equal(r.data.manancial.status, 'inside');
+  assert.equal(r.data.forest.available, true);
+  assert.equal(r.data.status.manancial, 'live');
+  assert.equal(r.data.weather, null);
+});
+
+test('transporte publico: estacoes mais proximas de um ponto (sem ponto de onibus), via /api/point', async () => {
+  // o mock do Overpass tem a "Estacao Se" (metro) em -22.87,-48.43
+  const r = await call('GET', '/api/point?lat=-22.872&lon=-48.432&include=transit');
+  assert.equal(r.status, 200);
+  assert.equal(r.data.status.transit, 'live');
+  assert.equal(r.data.transit.count, 1);
+  assert.equal(r.data.transit.stops[0].name, 'Estação Sé');
+  assert.equal(r.data.transit.stops[0].kind, 'metro');
+  assert.ok(r.data.transit.stops[0].distanceKm < 0.5);
+
+  const far = await (await fetch('http://localhost:4006/transit/around?lat=-10&lon=-40')).json();
+  assert.equal(far.count, 0);          // o mock devolve as mesmas estacoes; o filtro de 1 km as descarta
+  assert.equal((await fetch('http://localhost:4006/transit/around?lat=x&lon=1')).status, 400);
+});
+
+test('/api/manancial/watch passa pelo gateway', async () => {
+  const r = await call('GET', '/api/manancial/watch?lat=0.5&lon=0.8&radiusKm=10&days=30');
+  assert.equal(r.status, 200);
+  assert.equal(r.data.available, true);
+  assert.ok(r.data.areas.some((a) => a.name === 'Represa Teste' && a.confirmed === 6 && a.cells.length >= 1));
+});
+
+test('incidentes de transito: o monitor pode pedir mais itens (max)', async () => {
+  const bb = 'south=-23&west=-48.7&north=-22.7&east=-48.3';
+  const a = await call('GET', `/api/traffic/incidents?${bb}`);
+  assert.equal(a.status, 200);
+  const b = await (await fetch(`http://localhost:4008/incidents?${bb}&max=300`)).json();
+  assert.equal(b.enabled, true);
+  assert.ok(b.items.length >= 1);
 });

@@ -6,7 +6,9 @@ export const GEOCODING_URL = process.env.GEOCODING_SERVICE_URL || 'http://localh
 export const WEATHER_URL = process.env.WEATHER_SERVICE_URL || 'http://localhost:3002';
 export const AIR_QUALITY_URL = process.env.AIR_QUALITY_SERVICE_URL || 'http://localhost:3003';
 export const RISK_URL = process.env.RISK_SERVICE_URL || 'http://localhost:3005';
+export const PUSH_URL = process.env.PUSH_SERVICE_URL || 'http://localhost:3009';
 export const TRAFFIC_URL = process.env.TRAFFIC_SERVICE_URL || 'http://localhost:3008';
+export const GEODATA_URL = process.env.GEODATA_SERVICE_URL || 'http://localhost:3006';
 
 const DEFAULT_DEFORESTATION_TILES =
   'https://tiles.globalforestwatch.org/umd_tree_cover_loss/v1.8/tcd_30/{z}/{x}/{y}.png';
@@ -56,7 +58,10 @@ const POINT_PARTS = {
   air: (p) => callService(AIR_QUALITY_URL, `/air-quality?lat=${p.lat}&lon=${p.lon}&quiet=1`),
   flood: (p) => callService(RISK_URL, `/flood?lat=${p.lat}&lon=${p.lon}`),
   inversion: (p) => callService(RISK_URL, `/inversion?lat=${p.lat}&lon=${p.lon}`),
-  traffic: (p) => callService(TRAFFIC_URL, `/flow?lat=${p.lat}&lon=${p.lon}`)
+  traffic: (p) => callService(TRAFFIC_URL, `/flow?lat=${p.lat}&lon=${p.lon}`),
+  transit: (p) => callService(GEODATA_URL, `/transit/around?lat=${p.lat}&lon=${p.lon}`),
+  manancial: (p) => callService(GEODATA_URL, `/manancial?lat=${p.lat}&lon=${p.lon}`),
+  forest: (p) => callService(GEODATA_URL, `/forest/alerts?lat=${p.lat}&lon=${p.lon}&radiusKm=10&days=30`)
 };
 
 router.get('/point', async (req, res) => {
@@ -72,7 +77,7 @@ router.get('/point', async (req, res) => {
   if (cached) return res.json({ ...cached, source: 'cache' });
 
   const results = await Promise.allSettled(include.map((name) => POINT_PARTS[name](p)));
-  const out = { weather: null, air: null, flood: null, inversion: null, traffic: null, status: {} };
+  const out = { weather: null, air: null, flood: null, inversion: null, traffic: null, manancial: null, forest: null, transit: null, status: {} };
   include.forEach((name, i) => {
     if (results[i].status === 'fulfilled') { out[name] = results[i].value; out.status[name] = 'live'; }
     else {

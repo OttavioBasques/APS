@@ -55,6 +55,8 @@ const overpassWater = { elements: [
 ] };
 
 export const upstreamCalls = [];
+export const gfwCalls = [];   // consultas feitas ao GFW simulado (cabecalhos e corpo)
+export const fcmSent = [];   // mensagens que o push-service enviou ao FCM simulado
 
 export function installUpstreamMock() {
   globalThis.fetch = async (url, opts) => {
@@ -96,6 +98,8 @@ export function installUpstreamMock() {
         return new Response(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), { status: 200, headers: { 'content-type': 'image/png' } });
       }
       if (u.pathname.includes('incidentDetails')) {
+        // como a TomTom real: "language=pt-BR" e recusado (400). Garante que o servico nao volte a mandar o parametro.
+        if (u.searchParams.has('language')) return json({ detailedError: { code: 'INVALID_REQUEST', message: 'Unsupported language parameter value: ' + u.searchParams.get('language') } }, 400);
         return json({ incidents: [
           { type: 'Feature', geometry: { type: 'Point', coordinates: [-48.44, -22.88] },
             properties: { iconCategory: 6, magnitudeOfDelay: 3, from: 'Av. A', to: 'Av. B', length: 1200, delay: 600, events: [{ description: 'Trânsito parado' }] } },
@@ -109,6 +113,35 @@ export function installUpstreamMock() {
         if (u.searchParams.get('point').startsWith('0.5')) return json({ error: 'sem via' }, 400);
         return json({ flowSegmentData: { currentSpeed: 24, freeFlowSpeed: 40, currentTravelTime: 100, freeFlowTravelTime: 60, confidence: 0.9, roadClosure: false } });
       }
+    }
+    if (u.hostname === 'data-api.globalforestwatch.org') {
+      const body = JSON.parse(opts.body);
+      gfwCalls.push({ url: u.href, headers: opts.headers, body });
+      if (opts.headers['x-api-key'] !== 'gfw-teste') return json({ message: 'chave invalida' }, 403);
+      if (!opts.headers.origin) return json({ message: 'sem origin' }, 403);
+      const ring = body.geometry.coordinates[0];
+      const lats = ring.map((c) => c[1]); const lons = ring.map((c) => c[0]);
+      const nearTest = Math.min(...lats) > -0.5 && Math.max(...lats) < 1.5 && Math.min(...lons) > -0.5 && Math.max(...lons) < 1.5;
+      // regiao de teste (0..1): 6 alertas "high", 4 "nominal" e 3 "low"; resto do mundo: 2 "nominal"
+      const mk = (conf, i) => ({ latitude: 0.5 + i * 0.0001, longitude: 0.8, gfw_integrated_alerts__date: '2026-10-2' + (i % 9), gfw_integrated_alerts__confidence: conf });
+      const rows = nearTest
+        ? [...[0, 1, 2, 3, 4, 5].map((i) => mk('high', i)), ...[6, 7, 8, 9].map((i) => mk('nominal', i)), ...[10, 11, 12].map((i) => mk('low', i))]
+        : [mk('nominal', 0), mk('nominal', 1)];
+      return json({ data: rows, status: 'success' });
+    }
+    if (u.hostname === 'oauth2.googleapis.com') {
+      const form = new URLSearchParams(String(opts.body));
+      if (form.get('grant_type') !== 'urn:ietf:params:oauth:grant-type:jwt-bearer' || form.get('assertion').split('.').length !== 3) return json({ error: 'invalid_grant' }, 400);
+      return json({ access_token: 'token-de-teste', expires_in: 3600 });
+    }
+    if (u.hostname === 'fcm.googleapis.com') {
+      if (opts.headers.authorization !== 'Bearer token-de-teste') return json({ error: { status: 'UNAUTHENTICATED' } }, 401);
+      const body = JSON.parse(opts.body);
+      if (body.message.token.includes('MORTO')) {
+        return json({ error: { code: 404, status: 'NOT_FOUND', details: [{ errorCode: 'UNREGISTERED' }] } }, 404);
+      }
+      fcmSent.push(body.message);
+      return json({ name: 'projects/teste/messages/1' });
     }
     return realFetch(url, opts);
   };

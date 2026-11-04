@@ -16,6 +16,12 @@ const LOCATIONS = parseLocations(process.env.MONITOR_LOCATIONS);
 const RISK_URL = process.env.RISK_SERVICE_URL || 'http://localhost:3005';
 const AIR_URL = process.env.AIR_QUALITY_SERVICE_URL || 'http://localhost:3003';
 const TRAFFIC_URL = process.env.TRAFFIC_SERVICE_URL || 'http://localhost:3008';
+const GEODATA_URL = process.env.GEODATA_SERVICE_URL || 'http://localhost:3006';
+const WEATHER_URL = process.env.WEATHER_SERVICE_URL || 'http://localhost:3002';
+const LIMITS = {
+  manancialMin: Number(process.env.MANANCIAL_ALERT_MIN || 5),
+  forestMin: Number(process.env.FOREST_ALERT_MIN || 50)
+};
 
 // Duas fontes de alertas, sem acoplamento com quem produz os dados:
 //  1) eventos do Redis Pub/Sub (air-quality-service publica quando um usuario consulta um local com IQA alto);
@@ -32,6 +38,8 @@ const app = express();
 async function remember(alert) {
   await store.lpush('alerts:recent', JSON.stringify(alert));
   await store.ltrim('alerts:recent', 0, MAX_ALERTS - 1);
+  // avisa quem quiser reagir a alertas novos (hoje: push-service). Falha aqui nao perde o alerta.
+  try { await store.publish('alerts-new', JSON.stringify(alert)); } catch (e) { console.error('[alert-service] publish alerts-new:', e.message); }
 }
 
 subscriber.subscribe('air-quality-alerts', (err) => {
@@ -73,13 +81,17 @@ const settled = (r) => (r.status === 'fulfilled' ? r.value : null);
 export async function checkLocation(loc) {
   const d = 0.15;   // ~16 km em volta do ponto, dentro do limite de area da TomTom
   const bbox = `south=${loc.lat - d}&west=${loc.lon - d}&north=${loc.lat + d}&east=${loc.lon + d}`;
-  const [air, flood, inversion, traffic] = (await Promise.allSettled([
+  const [air, flood, inversion, traffic, watch, forest, weather, transit] = (await Promise.allSettled([
     getJson(`${AIR_URL}/air-quality?lat=${loc.lat}&lon=${loc.lon}&quiet=1`),
     getJson(`${RISK_URL}/flood?lat=${loc.lat}&lon=${loc.lon}`),
     getJson(`${RISK_URL}/inversion?lat=${loc.lat}&lon=${loc.lon}`),
-    getJson(`${TRAFFIC_URL}/incidents?${bbox}`)
+    getJson(`${TRAFFIC_URL}/incidents?${bbox}&max=300`),
+    getJson(`${GEODATA_URL}/manancial/watch?lat=${loc.lat}&lon=${loc.lon}&radiusKm=15&days=30`, 60000),
+    getJson(`${GEODATA_URL}/forest/alerts?lat=${loc.lat}&lon=${loc.lon}&radiusKm=10&days=30`, 45000),
+    getJson(`${WEATHER_URL}/weather?lat=${loc.lat}&lon=${loc.lon}`),
+    getJson(`${GEODATA_URL}/transit?${bbox}&scope=stations`, 45000)
   ])).map(settled);
-  return { air, flood, inversion, traffic };
+  return { air, flood, inversion, traffic, watch, forest, weather, transit };
 }
 
 export async function runMonitor() {
@@ -89,7 +101,7 @@ export async function runMonitor() {
     try {
       const readings = await checkLocation(loc);
       summaries.push(summarizeLocation(loc, readings));
-      for (const alert of buildMonitorAlerts(loc, readings, AQI_THRESHOLD)) {
+      for (const alert of buildMonitorAlerts(loc, readings, AQI_THRESHOLD, LIMITS)) {
         // IQA ruim usa a mesma chave do caminho Pub/Sub: um alerta por local, venha de onde vier
         const isAir = alert.kind === 'air-quality';
         const key = isAir ? `alerts:air:${loc.lat.toFixed(2)},${loc.lon.toFixed(2)}` : `alerts:mon:${alert.kind}:${loc.name}:${alert.level}`;

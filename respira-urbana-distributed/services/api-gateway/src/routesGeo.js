@@ -2,9 +2,7 @@ import { Router } from 'express';
 import { callService, forward } from './serviceClients.js';
 import { getCached, setCached } from './cache.js';
 import { snapGrid } from './grid.js';
-import { WEATHER_URL, AIR_QUALITY_URL, RISK_URL } from './routes.js';
-
-const GEODATA_URL = process.env.GEODATA_SERVICE_URL || 'http://localhost:3006';
+import { WEATHER_URL, AIR_QUALITY_URL, RISK_URL, GEODATA_URL } from './routes.js';
 const GRID_TTL_SECONDS = Number(process.env.GRID_CACHE_TTL_SECONDS || 1800);
 
 export const geoRouter = Router();
@@ -42,3 +40,8 @@ geoRouter.get('/grid/inversion', gridHandler('inversion', RISK_URL, '/inversion-
 // Transporte publico e reservatorios/areas protegidas (OpenStreetMap).
 geoRouter.get('/transit', (req, res) => forward(req, res, GEODATA_URL, '/transit', { timeoutMs: 40000 }));
 geoRouter.get('/watersheds', (req, res) => forward(req, res, GEODATA_URL, '/watersheds', { timeoutMs: 40000 }));
+
+// Mananciais: este ponto esta em area de manancial? E desmatamento (alertas do GFW) no mapa.
+geoRouter.get('/manancial', (req, res) => forward(req, res, GEODATA_URL, '/manancial', { timeoutMs: 40000 }));
+geoRouter.get('/forest/alerts', (req, res) => forward(req, res, GEODATA_URL, '/forest/alerts', { timeoutMs: 40000 }));
+geoRouter.get('/manancial/watch', (req, res) => forward(req, res, GEODATA_URL, '/manancial/watch', { timeoutMs: 60000 }));

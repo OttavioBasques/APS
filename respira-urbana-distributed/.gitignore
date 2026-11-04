@@ -2,3 +2,8 @@ node_modules/
 .env
 npm-debug.log
 .DS_Store
+
+deploy/.env
+secrets/
+*service-account*.json
+*firebase-adminsdk*.json
