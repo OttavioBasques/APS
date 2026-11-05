@@ -1,0 +1,17 @@
+sequenceDiagram
+    participant S as alert-service
+    participant R as Redis
+    participant P as push-service
+    participant F as Firebase (FCM)
+    participant A as App Android
+    A->>P: POST /api/push/register (token, nível, área) via gateway
+    P->>R: grava o aparelho em push:devices
+    Note over S: ciclo de monitoramento (15 min)
+    S->>S: buildMonitorAlerts() + deduplicação
+    S->>R: LPUSH alerts:recent
+    S--)R: PUBLISH alerts-new
+    R--)P: mensagem entregue ao assinante
+    P->>P: shouldReceive(): nível, tipo e distância
+    P->>F: POST messages:send (OAuth2 com JWT RS256)
+    F--)A: notificação push
+    A->>A: toque abre o local do alerta no mapa

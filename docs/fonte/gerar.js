@@ -127,7 +127,6 @@ const capaParas = [
 
 // ---------- índice ----------
 const headingsFor = secoes.filter(([t]) => t === 'h1' || t === 'h2').map(([t, s]) => [t, s]);
-headingsFor.push(['h1', 'FICHA DE ATIVIDADES PRÁTICAS SUPERVISIONADAS']);
 const tocParas = [
   new Paragraph({ alignment: AlignmentType.CENTER, spacing: { line: LINE15, after: 240 }, children: [new TextRun({ text: 'ÍNDICE', bold: true })] }),
   ...headingsFor.map(([t, s]) => new Paragraph({
@@ -219,8 +218,6 @@ const doc = new Document({
   sections: [
     { properties: { titlePage: true, page: { size: { width: 11906, height: 16838 }, margin: { top: Math.round(2.5 * CM), bottom: Math.round(2.5 * CM), left: Math.round(2.5 * CM), right: Math.round(2.5 * CM) } } },
       headers: { default: pageHeader, first: emptyHeader }, children },
-    { properties: { page: { size: { width: 11906, height: 16838, orientation: PageOrientation.LANDSCAPE }, margin: { top: Math.round(2 * CM), bottom: Math.round(2 * CM), left: Math.round(2 * CM), right: Math.round(2 * CM) } } },
-      headers: { default: emptyHeader }, children: capa.alunos.flatMap(ficha) },
   ],
 });
 
